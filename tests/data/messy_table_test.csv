@@ -1,0 +1,4 @@
+specimen,T_K,pres_pa,m_g,t_sec,SiC_pct,diamond_pct,note
+A-001,298,100900,5.2,0,80,20,start
+A-002,373,100850,5.1,30,80,20,after heating
+A-003,473,100820,4.9,60,80,20,mass dropped

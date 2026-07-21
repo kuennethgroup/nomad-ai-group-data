@@ -15,3 +15,16 @@ tabular_guess_schema = TabularGuessSchemaEntryPoint(
         'structure for uploaded Excel/CSV data.'
     ),
 )
+
+
+class CeramicTableDataSchemaEntryPoint(SchemaPackageEntryPoint):
+    def load(self):
+        from nomad_auto_upload_tables.schema_packages.ceramics import m_package
+
+        return m_package
+
+
+ceramic_table_data_schema = CeramicTableDataSchemaEntryPoint(
+    name='CeramicTableDataSchema',
+    description='Stable search quantities for generated ceramic table summaries.',
+)

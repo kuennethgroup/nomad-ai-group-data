@@ -8,6 +8,7 @@ and reused unchanged by the NOMAD parser/normalizer that wrap it.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 
@@ -43,6 +44,8 @@ QUANTITY_TYPES = ['string', 'integer', 'float', 'boolean', 'datetime']
 KNOWN_KEYWORD_CONFIDENCE = 0.8
 DEFAULT_CONFIDENCE = 0.2
 MAX_SAMPLE_VALUES = 5
+SUPPORTED_TABLE_EXTENSIONS = ('.csv', '.tsv', '.xlsx', '.xls')
+ARCHIVE_CONTENT_MARKERS = ('"m_def"', '"data"', '"archive"', '"metadata"')
 
 
 @dataclass
@@ -68,7 +71,51 @@ def read_table(path: str, sheet_name: int | str = 0) -> tuple[pd.DataFrame, str 
         df = pd.read_excel(path, sheet_name=sheet_name)
         used_sheet = sheet_name if isinstance(sheet_name, str) else _first_sheet_name(path)
         return df, used_sheet
-    return pd.read_csv(path), None
+    if lower.endswith(('.csv', '.tsv')):
+        if is_likely_nomad_archive_file(path):
+            raise ValueError(f'File appears to be a NOMAD archive, not a source table: {path!r}')
+        return read_delimited_table(path, filename=lower), None
+    raise ValueError(f'Unsupported table file extension for {path!r}')
+
+
+def is_supported_table_file(path: str) -> bool:
+    return str(path).lower().endswith(SUPPORTED_TABLE_EXTENSIONS)
+
+
+def read_delimited_table(file_or_path, *, filename: str | None = None) -> pd.DataFrame:
+    """Read CSV-like table files with conservative delimiter handling.
+
+    ``sep=None`` lets pandas use Python's CSV sniffer for comma and semicolon
+    CSV files. TSV files are explicit because tabs are unambiguous and common
+    enough to avoid relying on sniffing.
+    """
+    lower = str(filename or file_or_path).lower()
+    if lower.endswith('.tsv'):
+        return pd.read_csv(file_or_path, sep='\t')
+    return pd.read_csv(file_or_path, sep=None, engine='python')
+
+
+def is_likely_nomad_archive_file(path: str) -> bool:
+    """Return ``True`` for serialized NOMAD archive files.
+
+    This intentionally looks at content, not just the extension. During save or
+    reprocessing, generated archive content can be handed around with names
+    that are not trustworthy enough to pass directly to pandas.
+    """
+    lower = str(path).lower()
+    if lower.endswith(('.archive.json', '.archive.yaml', '.archive.yml')):
+        return True
+    try:
+        with open(path, 'rb') as f:
+            sample = f.read(4096)
+    except OSError:
+        return False
+
+    stripped = sample.lstrip()
+    if not stripped.startswith((b'{', b'[')):
+        return False
+    text = stripped[:1024].decode('utf-8', errors='ignore')
+    return any(marker in text for marker in ARCHIVE_CONTENT_MARKERS)
 
 
 def _first_sheet_name(path: str) -> str:
@@ -121,6 +168,36 @@ def clean_name(header: str) -> str:
     return name or 'column'
 
 
+def safe_quantity_name(value, *, fallback_header: str) -> str:
+    name = clean_name(str(value or fallback_header))
+    if name[0].isdigit():
+        name = f'column_{name}'
+    return name
+
+
+def safe_unit(value) -> str:
+    unit = str(value or '').strip()
+    if not unit:
+        return ''
+    try:
+        from pint import UnitRegistry
+
+        UnitRegistry()(unit)
+    except Exception:
+        return ''
+    return unit
+
+
+def safe_confidence(value) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    if not math.isfinite(confidence):
+        return 0.5
+    return min(1.0, max(0.0, confidence))
+
+
 def guess_columns(
     df: pd.DataFrame, ai_guesses: dict[str, dict] | None = None
 ) -> list[ColumnGuess]:
@@ -136,11 +213,13 @@ def guess_columns(
         series = df[header]
         ai_guess = (ai_guesses or {}).get(header_str)
         if ai_guess:
-            guessed_name = ai_guess['guessed_name'] or clean_name(header_str)
-            guessed_type = ai_guess['guessed_type']
-            guessed_unit = ai_guess['guessed_unit']
-            category = ai_guess['category']
-            confidence = ai_guess['confidence']
+            guessed_name = safe_quantity_name(ai_guess.get('guessed_name'), fallback_header=header_str)
+            guessed_type = ai_guess.get('guessed_type')
+            guessed_type = guessed_type if guessed_type in QUANTITY_TYPES else 'string'
+            guessed_unit = safe_unit(ai_guess.get('guessed_unit'))
+            category = ai_guess.get('category')
+            category = category if category in CATEGORIES else 'other'
+            confidence = safe_confidence(ai_guess.get('confidence'))
         else:
             category, confidence = guess_category(header_str)
             guessed_name = clean_name(header_str)

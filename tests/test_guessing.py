@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from nomad_auto_upload_tables.guessing import (
     clean_name,
     coerce_value,
@@ -7,6 +9,7 @@ from nomad_auto_upload_tables.guessing import (
     guess_columns,
     guess_type,
     guess_unit,
+    is_supported_table_file,
     read_table,
 )
 
@@ -25,6 +28,41 @@ def test_read_table_csv():
     ]
     assert len(df) == 3
 
+
+
+
+def test_read_table_sniffs_semicolon_csv(tmp_path):
+    path = tmp_path / 'sample.csv'
+    path.write_text('Sample ID;Temperature (K);Pressure [Pa]\nS1;300.5;101325\nS2;310.0;100000\n')
+
+    df, sheet_name = read_table(path)
+
+    assert sheet_name is None
+    assert list(df.columns) == ['Sample ID', 'Temperature (K)', 'Pressure [Pa]']
+    assert df['Temperature (K)'].tolist() == [300.5, 310.0]
+
+
+def test_read_table_accepts_tsv(tmp_path):
+    path = tmp_path / 'sample.tsv'
+    path.write_text('Sample ID\tTemperature (K)\tPressure [Pa]\nS1\t300.5\t101325\n')
+
+    df, sheet_name = read_table(path)
+
+    assert sheet_name is None
+    assert list(df.columns) == ['Sample ID', 'Temperature (K)', 'Pressure [Pa]']
+    assert len(df) == 1
+
+
+def test_read_table_accepts_xls_extension(tmp_path):
+    path = tmp_path / 'sample.xls'
+    source, _ = read_table(DATA_DIR / 'sample.xlsx')
+    source.to_excel(path, index=False)
+
+    df, sheet_name = read_table(path)
+
+    assert sheet_name == 'Sheet1'
+    assert list(df.columns) == list(source.columns)
+    assert len(df) == len(source)
 
 def test_guess_unit_parses_parenthesized_and_bracketed_units():
     assert guess_unit('Temperature (K)') == 'K'
@@ -105,3 +143,53 @@ def test_guess_columns_handles_compound_units_and_padded_headers():
 
     # A trailing fractional value pulls the whole column to float.
     assert columns['Block'].guessed_type == 'float'
+
+
+def test_read_table_rejects_unsupported_files(tmp_path):
+    archive_file = tmp_path / 'sample.archive.json'
+    archive_file.write_text('{"data":{"m_def":"example"}}')
+
+    assert is_supported_table_file(archive_file) is False
+    with pytest.raises(ValueError, match='Unsupported table file extension'):
+        read_table(archive_file)
+
+
+def test_read_table_rejects_archive_content_even_with_csv_suffix(tmp_path):
+    archive_file = tmp_path / 'sample.csv'
+    archive_file.write_text('{"data":{"m_def":"nomad_auto_upload_tables.schema_packages.tabular_guess.TabularGuess","rows":[]}}')
+
+    assert is_supported_table_file(archive_file) is True
+    with pytest.raises(ValueError, match='appears to be a NOMAD archive'):
+        read_table(archive_file)
+
+
+def test_real_world_csv_fixtures_guess_expected_columns():
+    expected = {
+        'tabular_guess_test.csv': {
+            'Temperature (K)': ('temperature', 'K'),
+            'Pressure [Pa]': ('pressure', 'Pa'),
+            'Mass (g)': ('mass', 'g'),
+            'Time (s)': ('time', 's'),
+            'Composition SiC wt%': ('composition', ''),
+        },
+        'psd_test.csv': {
+            'Particle diameter (um)': ('length', 'um'),
+            'Size distribution volume weighted (%)': ('mass', '%'),
+            'Undersize volume weighted (%)': ('mass', '%'),
+            'Measurement method': ('measurement_result', ''),
+        },
+        'messy_table_test.csv': {
+            'specimen': ('sample_id', ''),
+            'T_K': ('other', ''),
+            'pres_pa': ('other', ''),
+            'm_g': ('other', ''),
+        },
+    }
+
+    for filename, columns_to_check in expected.items():
+        df, sheet_name = read_table(DATA_DIR / filename)
+        assert sheet_name is None
+        columns = {c.header: c for c in guess_columns(df)}
+        for header, (category, unit) in columns_to_check.items():
+            assert columns[header].category == category
+            assert columns[header].guessed_unit == unit

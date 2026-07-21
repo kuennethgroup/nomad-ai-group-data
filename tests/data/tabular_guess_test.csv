@@ -1,0 +1,5 @@
+Sample ID,Temperature (K),Pressure [Pa],Mass (g),Time (s),Composition SiC wt%,Composition Diamond wt%,Operator Note
+SIC-001,298,101325,12.40,0,85,15,initial powder batch
+SIC-002,373,101200,12.18,60,85,15,heated for one minute
+SIC-003,473,101050,11.92,120,85,15,continued heating
+SIC-004,573,100900,11.65,180,85,15,visible mass loss

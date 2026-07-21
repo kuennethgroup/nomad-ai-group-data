@@ -1,0 +1,97 @@
+definitions:
+  name: PSD curve schema
+  sections:
+    ParticleSizeDistribution:
+      base_sections:
+        - nomad.datamodel.data.EntryData
+        - nomad.parsing.tabular.TableData
+        - nomad.datamodel.metainfo.plot.PlotSection
+
+      m_annotations:
+        eln:
+          properties:
+            order:
+              - sample_id
+              - instrument
+              - data_file
+              - particle_diameter
+              - volume_distribution
+              - undersize_distribution
+
+        plotly_graph_object:
+          - label: PSD curve
+            index: 0
+            open: true
+            data:
+              x: "#particle_diameter"
+              y: "#volume_distribution"
+              type: scatter
+              mode: lines+markers
+              name: Volume distribution
+            layout:
+              title:
+                text: Particle size distribution
+              xaxis:
+                title:
+                  text: Particle diameter / µm
+              yaxis:
+                title:
+                  text: Volume distribution / %
+
+      more:
+        label_quantity: sample_id
+
+      quantities:
+        sample_id:
+          type: str
+          default: SiC-01
+          m_annotations:
+            eln:
+              component: StringEditQuantity
+
+        instrument:
+          type: str
+          default: Mastersizer 3000
+          m_annotations:
+            eln:
+              component: StringEditQuantity
+
+        data_file:
+          type: str
+          m_annotations:
+            tabular_parser:
+              parsing_options:
+                comment: "#"
+              mapping_options:
+                - mapping_mode: column
+                  file_mode: current_entry
+                  sections:
+                    - "#root"
+            browser:
+              adaptor: RawFileAdaptor
+            eln:
+              component: FileEditQuantity
+
+        particle_diameter:
+          type: np.float64
+          shape: ["*"]
+          unit: micrometer
+          m_annotations:
+            tabular:
+              name: particle_diameter
+
+        volume_distribution:
+          type: np.float64
+          shape: ["*"]
+          unit: percent
+          m_annotations:
+            tabular:
+              name: volume_distribution
+
+        undersize_distribution:
+          type: np.float64
+          shape: ["*"]
+          unit: percent
+          m_annotations:
+            tabular:
+              name: undersize_distribution

@@ -1,0 +1,9 @@
+Sample ID,Particle diameter (um),Size distribution volume weighted (%),Undersize volume weighted (%),Measurement method,Comment
+RECOSIC-A,0.50,1.2,1.2,Laser diffraction,low fines
+RECOSIC-A,1.00,3.8,5.0,Laser diffraction,
+RECOSIC-A,2.00,8.5,13.5,Laser diffraction,
+RECOSIC-A,5.00,18.0,31.5,Laser diffraction,main fraction
+RECOSIC-A,10.00,24.5,56.0,Laser diffraction,
+RECOSIC-A,20.00,19.0,75.0,Laser diffraction,
+RECOSIC-A,50.00,15.0,90.0,Laser diffraction,coarse tail
+RECOSIC-A,100.00,10.0,100.0,Laser diffraction,

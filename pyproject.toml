@@ -10,6 +10,7 @@ dependencies = [
     "nomad-lab>=1.3.4",
     "pandas>=2.0",
     "openpyxl>=3.1",
+    "xlrd>=2.0",
     "openai>=1.0",
 ]
 
@@ -23,6 +24,7 @@ dev = [
 
 [project.entry-points.'nomad.plugin']
 tabular_guess_schema = "nomad_auto_upload_tables.schema_packages:tabular_guess_schema"
+ceramic_table_data_schema = "nomad_auto_upload_tables.schema_packages:ceramic_table_data_schema"
 tabular_guess_parser = "nomad_auto_upload_tables.parsers:tabular_guess_parser"
 
 [build-system]

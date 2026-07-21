@@ -10,10 +10,45 @@ import.
 from __future__ import annotations
 
 import dataclasses
+import math
+import os
 
 import pandas as pd
+import yaml
 
-from nomad_auto_upload_tables.guessing import coerce_value, guess_columns, read_table
+from nomad.utils import generate_entry_id
+
+from nomad_auto_upload_tables.guessing import (
+    ARCHIVE_CONTENT_MARKERS,
+    coerce_value,
+    guess_columns,
+    is_supported_table_file,
+    read_delimited_table,
+    read_table,
+)
+
+
+
+CERAMIC_TABLE_DATA_BASE_SECTION = 'nomad_auto_upload_tables.schema_packages.ceramics.CeramicTableData'
+CERAMIC_TABLE_SUMMARY_COLUMNS = {
+    'sintering_temperature_c',
+    'secondary_content_wt_percent',
+    'density_g_cm3',
+    'relative_density_percent',
+    'open_porosity_percent',
+    'hardness_gpa',
+    'youngs_modulus_gpa',
+    'flexural_strength_mpa',
+    'fracture_toughness_mpa_m05',
+    'wear_rate_mm3_nm',
+    'grain_size_um',
+}
+CERAMIC_TABLE_SUMMARY_NAMES = {
+    f'{column}_{suffix}'
+    for column in CERAMIC_TABLE_SUMMARY_COLUMNS
+    for suffix in ('mean', 'min', 'max')
+}
+
 
 
 def build_initial_guess(
@@ -23,9 +58,9 @@ def build_initial_guess(
     model: str | None = None,
     base_url: str | None = None,
     logger=None,
-) -> tuple[str | None, int, list[dict], bool]:
+) -> tuple[str | None, int, list[dict], bool, dict | None]:
     """Read a spreadsheet on disk and return
-    ``(sheet_name, n_rows, columns, ai_assisted)`` where ``columns`` is a list
+    ``(sheet_name, n_rows, columns, ai_assisted, plot_suggestions)`` where ``columns`` is a list
     of dicts suitable for ``GuessedColumn(**d)``.
 
     If ``api_key`` and ``model`` are set, column semantics are guessed by an
@@ -36,13 +71,40 @@ def build_initial_guess(
     df, sheet_name = read_table(path)
 
     ai_guesses = None
+    plot_suggestions = None
     if api_key and model:
-        from nomad_auto_upload_tables.ai_guessing import guess_with_ai
+        from nomad_auto_upload_tables.ai_guessing import (
+            AI_MATERIAL_SUGGESTION_KEY,
+            AI_METHOD_SUGGESTION_KEY,
+            AI_PLOT_SUGGESTIONS_KEY,
+            guess_with_ai,
+        )
 
         ai_guesses = guess_with_ai(df, api_key=api_key, model=model, base_url=base_url, logger=logger)
+        if isinstance(ai_guesses, dict):
+            ai_guesses = dict(ai_guesses)
+            suggestions = {}
+            if AI_PLOT_SUGGESTIONS_KEY in ai_guesses:
+                suggestions.update(ai_guesses.pop(AI_PLOT_SUGGESTIONS_KEY))
+            if AI_MATERIAL_SUGGESTION_KEY in ai_guesses:
+                suggestions['material_suggestion'] = ai_guesses.pop(AI_MATERIAL_SUGGESTION_KEY)
+            if AI_METHOD_SUGGESTION_KEY in ai_guesses:
+                suggestions['method_suggestion'] = ai_guesses.pop(AI_METHOD_SUGGESTION_KEY)
+            plot_suggestions = suggestions or None
 
     columns = [dataclasses.asdict(c) for c in guess_columns(df, ai_guesses=ai_guesses)]
-    return sheet_name, len(df), columns, ai_guesses is not None
+    return sheet_name, len(df), columns, ai_guesses is not None, plot_suggestions
+
+
+def _raise_if_archive_content(file_obj, data_file: str) -> None:
+    position = file_obj.tell() if file_obj.seekable() else None
+    sample = file_obj.read(4096)
+    if position is not None:
+        file_obj.seek(position)
+    if isinstance(sample, bytes):
+        sample = sample.decode('utf-8', errors='ignore')
+    if any(marker in sample for marker in ARCHIVE_CONTENT_MARKERS):
+        raise ValueError(f'File appears to be a NOMAD archive, not a source table: {data_file!r}')
 
 
 def build_structured_rows(entry, archive) -> list:
@@ -54,13 +116,17 @@ def build_structured_rows(entry, archive) -> list:
         GuessedRow,
     )
 
+    if not is_supported_table_file(entry.data_file):
+        raise ValueError(f'Unsupported table file extension for {entry.data_file!r}')
+
     with archive.m_context.raw_file(entry.data_file) as f:
         if entry.data_file.lower().endswith(('.xlsx', '.xls')):
             df = pd.read_excel(f, sheet_name=entry.sheet_name or 0)
         else:
-            df = pd.read_csv(f)
+            _raise_if_archive_content(f, entry.data_file)
+            df = read_delimited_table(f, filename=entry.data_file)
 
-    included = [column for column in entry.columns if column.include]
+    included = [column for column in entry.columns if column.include is not False]
     rows = []
     for _, row in df.iterrows():
         properties = []
@@ -76,3 +142,214 @@ def build_structured_rows(entry, archive) -> list:
             )
         rows.append(GuessedRow(properties=properties))
     return rows
+
+
+def write_generated_artifacts(entry, archive, artifacts, *, logger=None) -> list[str]:
+    """Write generated schema/entry YAML files and schedule them for processing.
+
+    Existing files are left untouched unless ``entry.force_regenerate`` is true.
+    Returns the list of files that were written or scheduled.
+    """
+    context = archive.m_context
+    schema_yaml, entry_yaml = _with_search_summary_quantities(
+        entry, archive, artifacts.schema_yaml, artifacts.entry_yaml, artifacts, logger=logger
+    )
+    entry_yaml = _with_concrete_schema_reference(entry_yaml, artifacts, archive)
+    written: list[str] = []
+    for path, content in (
+        (artifacts.schema_file, schema_yaml),
+        (artifacts.entry_file, entry_yaml),
+    ):
+        exists = hasattr(context, 'raw_path_exists') and context.raw_path_exists(path)
+        if exists and not getattr(entry, 'force_regenerate', False):
+            if logger:
+                logger.info('Generated file already exists; not overwriting', path=path)
+            continue
+        _ensure_raw_parent_dir(context, path)
+        with context.raw_file(path, 'w') as f:
+            f.write(content)
+        written.append(path)
+        if hasattr(context, 'process_updated_raw_file'):
+            context.process_updated_raw_file(path, allow_modify=True)
+    return written
+
+
+
+def _with_search_summary_quantities(entry, archive, schema_yaml: str, entry_yaml: str, artifacts, *, logger=None) -> tuple[str, str]:
+    """Add scalar companion quantities that NOMAD can index for Explore widgets.
+
+    NOMAD's dynamic search quantity indexing skips array quantities, while native
+    tabular columns are arrays. These scalar summaries keep the table arrays as
+    the source of truth and add conservative entry-level fields for search.
+    """
+    try:
+        df = _read_source_table(entry, archive)
+        summaries = _search_summaries(entry, df)
+        if not summaries:
+            return schema_yaml, entry_yaml
+
+        schema_payload = yaml.safe_load(schema_yaml)
+        entry_payload = yaml.safe_load(entry_yaml)
+        section = schema_payload['definitions']['sections'][artifacts.section_name]
+        quantities = section.setdefault('quantities', {})
+        data = entry_payload.setdefault('data', {})
+
+        ceramic_summary_names = {name for name, _, _ in summaries if name in CERAMIC_TABLE_SUMMARY_NAMES}
+        if ceramic_summary_names:
+            _add_base_section(section, CERAMIC_TABLE_DATA_BASE_SECTION)
+
+        for name, quantity, value in summaries:
+            if name not in CERAMIC_TABLE_SUMMARY_NAMES:
+                quantities[name] = quantity
+            data[name] = value
+
+        return (
+            yaml.safe_dump(schema_payload, sort_keys=False, allow_unicode=True),
+            yaml.safe_dump(entry_payload, sort_keys=False, allow_unicode=True),
+        )
+    except Exception as e:  # noqa: BLE001 - summaries are useful, but should never block generation
+        if logger:
+            logger.warning('Could not add searchable table summaries', exc_info=e)
+        return schema_yaml, entry_yaml
+
+
+
+def _add_base_section(section: dict, base_section: str) -> None:
+    base_sections = section.setdefault('base_sections', [])
+    if base_section == CERAMIC_TABLE_DATA_BASE_SECTION and base_section not in base_sections:
+        base_sections[:] = [
+            existing
+            for existing in base_sections
+            if existing != 'nomad.datamodel.data.EntryData'
+        ]
+    if base_section not in base_sections:
+        base_sections.insert(0, base_section)
+
+def _read_source_table(entry, archive) -> pd.DataFrame:
+    if not is_supported_table_file(entry.data_file):
+        raise ValueError(f'Unsupported table file extension for {entry.data_file!r}')
+
+    with archive.m_context.raw_file(entry.data_file) as f:
+        if entry.data_file.lower().endswith(('.xlsx', '.xls')):
+            return pd.read_excel(f, sheet_name=entry.sheet_name or 0)
+        _raise_if_archive_content(f, entry.data_file)
+        return read_delimited_table(f, filename=entry.data_file)
+
+
+def _search_summaries(entry, df: pd.DataFrame) -> list[tuple[str, dict, object]]:
+    from nomad_auto_upload_tables.schema_generation import _canonical_unit, _quantity_name, _yaml_type
+
+    summaries: list[tuple[str, dict, object]] = []
+    included = [column for column in entry.columns if getattr(column, 'include', True) is not False]
+    used_names = {_quantity_name(column) for column in included}
+    for column in included:
+        header = getattr(column, 'header', None)
+        if header not in df.columns:
+            continue
+        quantity_name = _quantity_name(column)
+        guessed_type = str(getattr(column, 'guessed_type', '') or 'string')
+        category = str(getattr(column, 'category', '') or '')
+        unit = _canonical_unit(str(getattr(column, 'guessed_unit', '') or ''), quantity_name, category)
+        series = df[header].dropna()
+        if series.empty:
+            continue
+
+        if guessed_type in {'float', 'integer'}:
+            numeric = pd.to_numeric(series, errors='coerce').dropna()
+            if numeric.empty:
+                continue
+            for suffix, value in (
+                ('mean', _clean_summary_float(numeric.mean())),
+                ('min', _clean_summary_float(numeric.min())),
+                ('max', _clean_summary_float(numeric.max())),
+            ):
+                if not math.isfinite(value):
+                    continue
+                name = _unique_search_name(f'{quantity_name}_{suffix}', used_names)
+                quantity = _search_quantity_dict(
+                    'np.float64',
+                    f'Searchable {suffix} summary for imported column {header!r}.',
+                    unit=unit,
+                )
+                summaries.append((name, quantity, value))
+                used_names.add(name)
+            continue
+
+        unique_values = _unique_scalar_values(series, guessed_type)
+        if len(unique_values) == 1:
+            name = _unique_search_name(quantity_name, used_names)
+            quantity = _search_quantity_dict(
+                _yaml_type(guessed_type),
+                f'Searchable single-value summary for imported column {header!r}.',
+                unit=unit,
+            )
+            summaries.append((name, quantity, unique_values[0]))
+            used_names.add(name)
+
+    return summaries
+
+
+
+def _clean_summary_float(value) -> float:
+    return float(f'{float(value):.12g}')
+
+def _search_quantity_dict(quantity_type: str, description: str, *, unit: str = '') -> dict:
+    quantity = {
+        'type': quantity_type,
+        'description': description,
+        'm_annotations': {'display': {'visible': False}},
+    }
+    if unit:
+        quantity['unit'] = unit
+    return quantity
+
+
+def _unique_search_name(name: str, used_names: set[str]) -> str:
+    candidate = name
+    index = 2
+    while candidate in used_names:
+        candidate = f'{name}_{index}'
+        index += 1
+    return candidate
+
+
+def _unique_scalar_values(series: pd.Series, guessed_type: str) -> list[object]:
+    values: list[object] = []
+    for raw in series:
+        value = coerce_value(raw, guessed_type)
+        if value is None:
+            continue
+        if guessed_type == 'boolean':
+            value = bool(value)
+        else:
+            value = str(value)
+        if value not in values:
+            values.append(value)
+        if len(values) > 1:
+            break
+    return values
+
+def _with_concrete_schema_reference(entry_yaml: str, artifacts, archive) -> str:
+    upload_id = getattr(getattr(archive, 'metadata', None), 'upload_id', None)
+    if not upload_id:
+        return entry_yaml
+
+    try:
+        payload = yaml.safe_load(entry_yaml)
+        data = payload.get('data') if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return entry_yaml
+        schema_entry_id = generate_entry_id(upload_id, artifacts.schema_file)
+        data['m_def'] = (
+            f'../uploads/{upload_id}/archive/{schema_entry_id}'
+            f'#/definitions/sections/{artifacts.section_name}'
+        )
+        return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    except Exception:  # noqa: BLE001 - fall back to the generic URL and let NOMAD report errors
+        return entry_yaml
+
+def _ensure_raw_parent_dir(context, path: str) -> None:
+    dirname = os.path.dirname(path)
+    if not dirname or not hasattr(context, 'raw_path'):
+        return
+    os.makedirs(os.path.join(context.raw_path(), dirname), exist_ok=True)

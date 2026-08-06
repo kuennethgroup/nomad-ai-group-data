@@ -117,6 +117,165 @@ def test_confirmed_review_generates_schema_and_entry_files(tmp_path):
 
 
 
+
+def _confirmed_review_from_file(tmp_path, filename):
+    raw_file = tmp_path / filename
+    raw_file.write_bytes((DATA_DIR / filename).read_bytes())
+    archive = WritableFakeArchive(tmp_path, mainfile=filename)
+    parser = TabularGuessParser()
+    parser.parse(str(raw_file), archive)
+    review = yaml.safe_load((tmp_path / 'generated_reviews' / f'{Path(filename).stem}_review.archive.yaml').read_text())
+    entry = TabularGuess.m_from_dict(review['data'])
+    entry.confirm_schema = True
+    archive.data = entry
+    return parser, archive, entry
+
+
+def test_confirmed_row_mode_generates_schema_and_row_entries(tmp_path):
+    parser, archive, entry = _confirmed_review_from_file(tmp_path, 'sample.csv')
+    entry.mapping_mode = 'row'
+
+    parser.after_normalization(archive)
+
+    schema_file = tmp_path / 'generated_schemas' / 'sample_row_schema.archive.yaml'
+    row_dir = tmp_path / 'generated_row_entries' / 'sample'
+    assert schema_file.exists()
+    assert (row_dir / 'S001.archive.yaml').exists()
+    assert (row_dir / 'S002.archive.yaml').exists()
+    assert (row_dir / 'S003.archive.yaml').exists()
+
+    processed_paths = [path for path, allow_modify in archive.m_context.processed]
+    assert processed_paths.index('generated_schemas/sample_row_schema.archive.yaml') < processed_paths.index(
+        'generated_row_entries/sample/S001.archive.yaml'
+    )
+
+    generated_schema = yaml.safe_load(schema_file.read_text())
+    section = generated_schema['definitions']['sections']['Sample']
+    quantities = section['quantities']
+    assert section['base_sections'] == ['nomad.datamodel.data.EntryData']
+    assert section['more']['label_quantity'] == 'sample_id'
+    assert quantities['source_file']['type'] == 'str'
+    assert quantities['source_row']['type'] == 'np.int64'
+    assert quantities['temperature']['type'] == 'np.float64'
+    assert quantities['temperature']['unit'] == 'K'
+    assert 'shape' not in quantities['temperature']
+    assert 'data_file' not in quantities
+
+    generated_entry = yaml.safe_load((row_dir / 'S001.archive.yaml').read_text())
+    schema_entry_id = generate_entry_id('test-upload', 'generated_schemas/sample_row_schema.archive.yaml')
+    assert generated_entry['data']['m_def'] == (
+        f'../uploads/test-upload/archive/{schema_entry_id}'
+        '#/definitions/sections/Sample'
+    )
+    assert generated_entry['metadata']['entry_name'] == 'S001'
+    assert generated_entry['data']['source_file'] == 'sample.csv'
+    assert generated_entry['data']['source_row'] == 1
+    assert generated_entry['data']['sample_id'] == 'S001'
+    assert generated_entry['data']['temperature'] == 300.5
+    assert generated_entry['data']['pressure'] == 101325
+
+    generated_entry = yaml.safe_load((row_dir / 'S002.archive.yaml').read_text())
+    assert 'notes' not in generated_entry['data']
+
+
+def test_row_mode_omits_invalid_values_and_deduplicates_row_ids(tmp_path):
+    raw_csv = tmp_path / 'rows.csv'
+    raw_csv.write_text('Sample ID,Value,Flag\nA,1.5,true\nA,bad,maybe\n,3.0,false\n')
+    archive = WritableFakeArchive(tmp_path, mainfile='rows.csv')
+    parser = TabularGuessParser()
+    parser.parse(str(raw_csv), archive)
+    review = yaml.safe_load((tmp_path / 'generated_reviews' / 'rows_review.archive.yaml').read_text())
+    entry = TabularGuess.m_from_dict(review['data'])
+    entry.confirm_schema = True
+    entry.mapping_mode = 'row'
+    by_header = {column.header: column for column in entry.columns}
+    by_header['Value'].guessed_type = 'float'
+    by_header['Flag'].guessed_type = 'boolean'
+    archive.data = entry
+
+    parser.after_normalization(archive)
+
+    row_dir = tmp_path / 'generated_row_entries' / 'rows'
+    assert (row_dir / 'A.archive.yaml').exists()
+    assert (row_dir / 'A_2.archive.yaml').exists()
+    assert (row_dir / 'row_0003.archive.yaml').exists()
+
+    row1 = yaml.safe_load((row_dir / 'A.archive.yaml').read_text())['data']
+    row2 = yaml.safe_load((row_dir / 'A_2.archive.yaml').read_text())['data']
+    row3 = yaml.safe_load((row_dir / 'row_0003.archive.yaml').read_text())['data']
+    assert row1['value'] == 1.5
+    assert row1['flag'] is True
+    assert 'value' not in row2
+    assert 'flag' not in row2
+    assert row3['value'] == 3.0
+    assert row3['flag'] is False
+
+
+def test_row_mode_does_not_clobber_files_without_force(tmp_path):
+    parser, archive, entry = _confirmed_review_from_file(tmp_path, 'sample.csv')
+    entry.mapping_mode = 'row'
+    parser.after_normalization(archive)
+
+    row_file = tmp_path / 'generated_row_entries' / 'sample' / 'S001.archive.yaml'
+    row_file.write_text('sentinel: true\n')
+    parser.after_normalization(archive)
+    assert row_file.read_text() == 'sentinel: true\n'
+
+    entry.force_regenerate = True
+    parser.after_normalization(archive)
+    assert 'source_row: 1' in row_file.read_text()
+
+
+
+def test_row_mode_accepts_semicolon_tsv_and_xls_sources(tmp_path):
+    cases = {
+        'semicolon.csv': 'Sample ID;Temperature (K)\nS1;300.5\n',
+        'table.tsv': 'Sample ID\tTemperature (K)\nS1\t300.5\n',
+    }
+    for filename, content in cases.items():
+        source = tmp_path / filename
+        source.write_text(content)
+        archive = WritableFakeArchive(tmp_path, mainfile=filename)
+        parser = TabularGuessParser()
+        parser.parse(str(source), archive)
+        review = yaml.safe_load((tmp_path / 'generated_reviews' / f'{Path(filename).stem}_review.archive.yaml').read_text())
+        entry = TabularGuess.m_from_dict(review['data'])
+        entry.confirm_schema = True
+        entry.mapping_mode = 'row'
+        archive.data = entry
+
+        parser.after_normalization(archive)
+
+        generated = tmp_path / 'generated_row_entries' / Path(filename).stem / 'S1.archive.yaml'
+        assert generated.exists()
+        assert yaml.safe_load(generated.read_text())['data']['temperature'] == 300.5
+
+    xls_source = tmp_path / 'sample.xls'
+    xls_source.write_bytes((DATA_DIR / 'sample.xlsx').read_bytes())
+    archive = WritableFakeArchive(tmp_path, mainfile='sample.xls')
+    parser = TabularGuessParser()
+    parser.parse(str(xls_source), archive)
+    review = yaml.safe_load((tmp_path / 'generated_reviews' / 'sample_review.archive.yaml').read_text())
+    entry = TabularGuess.m_from_dict(review['data'])
+    entry.confirm_schema = True
+    entry.mapping_mode = 'row'
+    archive.data = entry
+
+    parser.after_normalization(archive)
+
+    assert (tmp_path / 'generated_row_entries' / 'sample' / 'S001.archive.yaml').exists()
+
+
+def test_xlsx_row_mode_generates_row_entries(tmp_path):
+    parser, archive, entry = _confirmed_review_from_file(tmp_path, 'sample.xlsx')
+    entry.mapping_mode = 'row'
+
+    parser.after_normalization(archive)
+
+    assert (tmp_path / 'generated_schemas' / 'sample_row_schema.archive.yaml').exists()
+    assert (tmp_path / 'generated_row_entries' / 'sample' / 'S001.archive.yaml').exists()
+
+
 def test_confirmed_review_does_not_clobber_generated_files_without_force(tmp_path):
     raw_csv = tmp_path / 'sample.csv'
     raw_csv.write_bytes((DATA_DIR / 'sample.csv').read_bytes())

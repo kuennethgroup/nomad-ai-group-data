@@ -12,6 +12,8 @@ from __future__ import annotations
 import dataclasses
 import math
 import os
+import re
+from pathlib import PurePosixPath
 
 import pandas as pd
 import yaml
@@ -20,6 +22,7 @@ from nomad.utils import generate_entry_id
 
 from nomad_auto_upload_tables.guessing import (
     ARCHIVE_CONTENT_MARKERS,
+    QUANTITY_TYPES,
     coerce_value,
     guess_columns,
     is_supported_table_file,
@@ -128,18 +131,45 @@ def write_generated_artifacts(entry, archive, artifacts, *, logger=None) -> list
     Existing files are left untouched unless ``entry.force_regenerate`` is true.
     Returns the list of files that were written or scheduled.
     """
+    if getattr(artifacts, 'mapping_mode', 'column') == 'row':
+        return _write_generated_row_artifacts(entry, archive, artifacts, logger=logger)
+
     context = archive.m_context
     schema_yaml, entry_yaml = _with_search_summary_quantities(
         entry, archive, artifacts.schema_yaml, artifacts.entry_yaml, artifacts, logger=logger
     )
     entry_yaml = _with_concrete_schema_reference(entry_yaml, artifacts, archive)
+    return _write_generated_files(
+        context,
+        (
+            (artifacts.schema_file, schema_yaml),
+            (artifacts.entry_file, entry_yaml),
+        ),
+        force=getattr(entry, 'force_regenerate', False),
+        logger=logger,
+    )
+
+
+def _write_generated_row_artifacts(entry, archive, artifacts, *, logger=None) -> list[str]:
+    context = archive.m_context
+    df = _read_source_table(entry, archive)
+    schema_ref = _schema_m_def_ref(artifacts, archive)
+    row_files = _row_entry_files(entry, df, artifacts, schema_ref)
+    return _write_generated_files(
+        context,
+        ((artifacts.schema_file, artifacts.schema_yaml), *row_files),
+        force=getattr(entry, 'force_regenerate', False),
+        logger=logger,
+    )
+
+
+def _write_generated_files(context, files, *, force: bool, logger=None) -> list[str]:
     written: list[str] = []
-    for path, content in (
-        (artifacts.schema_file, schema_yaml),
-        (artifacts.entry_file, entry_yaml),
-    ):
+    for path, content in files:
+        if not path or not content:
+            continue
         exists = hasattr(context, 'raw_path_exists') and context.raw_path_exists(path)
-        if exists and not getattr(entry, 'force_regenerate', False):
+        if exists and not force:
             if logger:
                 logger.info('Generated file already exists; not overwriting', path=path)
             continue
@@ -150,6 +180,122 @@ def write_generated_artifacts(entry, archive, artifacts, *, logger=None) -> list
         if hasattr(context, 'process_updated_raw_file'):
             context.process_updated_raw_file(path, allow_modify=True)
     return written
+
+
+def _row_entry_files(entry, df: pd.DataFrame, artifacts, schema_ref: str) -> tuple[tuple[str, str], ...]:
+    from nomad_auto_upload_tables.schema_generation import ROW_ENTRY_DIR, _base_name, _dump_yaml, _label_quantity, _quantity_name
+
+    base = _base_name(entry.data_file or 'table')
+    columns = [column for column in entry.columns if getattr(column, 'include', True) is not False]
+    label_quantity = _label_quantity(columns)
+    label_column = _row_label_column(columns, label_quantity)
+    used_ids: set[str] = set()
+    row_files: list[tuple[str, str]] = []
+    for zero_index, (_, row) in enumerate(df.iterrows()):
+        source_row = zero_index + 1
+        row_id = _unique_row_id(_row_id(row, label_column, source_row), used_ids)
+        data = {
+            'm_def': schema_ref,
+            'source_file': str(entry.data_file).strip().lstrip('/'),
+            'source_row': source_row,
+        }
+        for column in columns:
+            header = getattr(column, 'header', None)
+            if header not in df.columns:
+                continue
+            value = _coerce_row_value(row[header], str(getattr(column, 'guessed_type', '') or 'string'))
+            if value is None:
+                continue
+            data[_quantity_name(column)] = value
+        payload = {'metadata': {'entry_name': row_id}, 'data': data}
+        path = f'{ROW_ENTRY_DIR}/{base}/{row_id}.archive.yaml'
+        row_files.append((path, _dump_yaml(payload)))
+    return tuple(row_files)
+
+
+def _schema_m_def_ref(artifacts, archive) -> str:
+    upload_id = getattr(getattr(archive, 'metadata', None), 'upload_id', None)
+    if upload_id:
+        schema_entry_id = generate_entry_id(upload_id, artifacts.schema_file)
+        return f'../uploads/{upload_id}/archive/{schema_entry_id}#/definitions/sections/{artifacts.section_name}'
+    return f'../uploads/archive/mainfile/{artifacts.schema_file}#/definitions/sections/{artifacts.section_name}'
+
+
+def _row_label_column(columns, label_quantity: str | None):
+    from nomad_auto_upload_tables.schema_generation import _quantity_name
+
+    preferred = [label_quantity, 'sample_id', 'sample_name', 'id', 'name']
+    for preferred_name in preferred:
+        if not preferred_name:
+            continue
+        for column in columns:
+            if _quantity_name(column) == preferred_name:
+                return column
+    return None
+
+
+def _row_id(row, label_column, source_row: int) -> str:
+    if label_column is not None:
+        header = getattr(label_column, 'header', None)
+        if header in row.index:
+            value = row[header]
+            if not pd.isna(value) and str(value).strip():
+                return _safe_row_id(str(value))
+    return f'row_{source_row:04d}'
+
+
+def _unique_row_id(row_id: str, used_ids: set[str]) -> str:
+    candidate = row_id or 'row'
+    index = 2
+    while candidate in used_ids:
+        candidate = f'{row_id}_{index}'
+        index += 1
+    used_ids.add(candidate)
+    return candidate
+
+
+def _safe_row_id(value: str) -> str:
+    safe = re.sub(r'[^0-9A-Za-z_.-]+', '_', str(value).strip()).strip('._-')
+    if not safe:
+        safe = 'row'
+    if safe in {'.', '..'}:
+        safe = f'row_{safe.replace(".", "") or "entry"}'
+    return PurePosixPath(safe).name
+
+
+def _coerce_row_value(raw_value, guessed_type: str):
+    if pd.isna(raw_value):
+        return None
+    guessed_type = guessed_type if guessed_type in QUANTITY_TYPES else 'string'
+    try:
+        if guessed_type == 'integer':
+            value = pd.to_numeric(raw_value, errors='coerce')
+            if pd.isna(value):
+                return None
+            return int(value)
+        if guessed_type == 'float':
+            value = pd.to_numeric(raw_value, errors='coerce')
+            if pd.isna(value) or not math.isfinite(float(value)):
+                return None
+            return float(value)
+        if guessed_type == 'boolean':
+            if isinstance(raw_value, bool):
+                return raw_value
+            text = str(raw_value).strip().lower()
+            if text in {'true', '1', 'yes', 'y'}:
+                return True
+            if text in {'false', '0', 'no', 'n'}:
+                return False
+            return None
+        if guessed_type == 'datetime':
+            value = pd.to_datetime(raw_value, errors='coerce')
+            if pd.isna(value):
+                return None
+            return pd.Timestamp(value).isoformat()
+    except (TypeError, ValueError, OverflowError):
+        return None
+    text = str(raw_value).strip()
+    return text or None
 
 
 

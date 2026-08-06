@@ -11,6 +11,7 @@ from nomad_auto_upload_tables.guessing import safe_quantity_name, safe_unit
 
 SCHEMA_DIR = 'generated_schemas'
 ENTRY_DIR = 'generated_entries'
+ROW_ENTRY_DIR = 'generated_row_entries'
 REVIEW_DIR = 'generated_reviews'
 
 X_CATEGORY_PRIORITY = (
@@ -104,14 +105,33 @@ class GeneratedArtifacts:
     enabled_plots: tuple[str, ...] = ()
     plot_columns: tuple[str, ...] = ()
     plot_label: str | None = None
+    mapping_mode: str = 'column'
 
 
 def build_generated_artifacts(entry) -> GeneratedArtifacts:
     base = _base_name(entry.data_file or 'table')
+    mapping_mode = str(getattr(entry, 'mapping_mode', None) or 'column')
     section_name = _section_name(getattr(entry, 'generated_section_name', None), base, entry.columns)
+    columns = _included_columns(entry.columns)
+
+    if mapping_mode == 'row':
+        schema_file = _row_schema_path(getattr(entry, 'generated_schema_file', None), base)
+        schema_dict = build_row_schema_dict(
+            section_name=section_name,
+            schema_name=f'{_title_from_identifier(section_name)} row schema',
+            columns=columns,
+        )
+        return GeneratedArtifacts(
+            schema_file=schema_file,
+            entry_file='',
+            section_name=section_name,
+            schema_yaml=_dump_yaml(schema_dict),
+            entry_yaml='',
+            mapping_mode='row',
+        )
+
     schema_file = _defaulted_path(getattr(entry, 'generated_schema_file', None), SCHEMA_DIR, f'{base}_schema.archive.yaml')
     entry_file = _defaulted_path(getattr(entry, 'generated_entry_file', None), ENTRY_DIR, f'{base}_entry.archive.yaml')
-    columns = _included_columns(entry.columns)
     enabled_plots, plot_columns, plot_label = _plot_config_from_entry(entry, columns)
 
     schema_dict = build_schema_dict(
@@ -140,7 +160,54 @@ def build_generated_artifacts(entry) -> GeneratedArtifacts:
         enabled_plots=tuple(enabled_plots),
         plot_columns=tuple(plot_columns),
         plot_label=plot_label,
+        mapping_mode='column',
     )
+
+
+def build_row_schema_dict(
+    *,
+    section_name: str,
+    schema_name: str,
+    columns: list,
+) -> dict[str, Any]:
+    quantities: dict[str, Any] = {
+        'source_file': {
+            'type': 'str',
+            'description': 'Original uploaded table file this row was generated from.',
+        },
+        'source_row': {
+            'type': 'np.int64',
+            'description': 'One-based source table row number.',
+        },
+    }
+    order = ['source_file', 'source_row']
+    for column in columns:
+        quantity_name = _quantity_name(column)
+        order.append(quantity_name)
+        quantity = {
+            'type': _yaml_type(column.guessed_type),
+            'description': _description(column),
+        }
+        unit = _canonical_unit(getattr(column, 'guessed_unit', '') or '', quantity_name, getattr(column, 'category', ''))
+        if unit:
+            quantity['unit'] = unit
+        quantities[quantity_name] = quantity
+
+    section: dict[str, Any] = {
+        'base_sections': ['nomad.datamodel.data.EntryData'],
+        'm_annotations': {'eln': {'properties': {'order': order}}},
+        'quantities': quantities,
+    }
+    label_quantity = _label_quantity(columns)
+    if label_quantity:
+        section['more'] = {'label_quantity': label_quantity}
+
+    return {
+        'definitions': {
+            'name': schema_name,
+            'sections': {section_name: section},
+        }
+    }
 
 
 def build_schema_dict(
@@ -773,6 +840,15 @@ def _base_name(path: str) -> str:
     else:
         name = PurePosixPath(name).stem
     return safe_quantity_name(name, fallback_header='table')
+
+
+def _row_schema_path(value: str | None, base: str) -> str:
+    column_default = f'{SCHEMA_DIR}/{base}_schema.archive.yaml'
+    row_default = f'{SCHEMA_DIR}/{base}_row_schema.archive.yaml'
+    clean = str(value or '').strip().lstrip('/')
+    if not clean or clean == column_default:
+        return row_default
+    return clean
 
 
 def _defaulted_path(value: str | None, directory: str, default_name: str) -> str:

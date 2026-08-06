@@ -89,10 +89,6 @@ class TabularGuessParser(MatchingParser):
 def _generate_confirmed_artifacts(entry: TabularGuess, archive, *, logger=None) -> bool:
     if not (entry.confirm_schema and entry.columns and entry.data_file):
         return False
-    if entry.mapping_mode not in (None, 'column'):
-        if logger:
-            logger.warning('Only column mapping mode is supported for generated schemas in this implementation')
-        return False
     try:
         artifacts = build_generated_artifacts(entry)
         write_generated_artifacts(entry, archive, artifacts, logger=logger)

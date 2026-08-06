@@ -148,7 +148,7 @@ class TabularGuess(EntryData):
     mapping_mode = Quantity(
         type=MEnum(MAPPING_MODES),
         default='column',
-        description='Native NOMAD tabular parser mapping mode. Only column mode is generated in this implementation.',
+        description='Generation mode. Column mode creates one entry per table with array quantities; row mode creates one scalar entry per table row.',
         a_eln=ELNAnnotation(component=ELNComponentEnum.EnumEditQuantity),
     )
     enable_xy_scatter = Quantity(
@@ -271,10 +271,6 @@ class TabularGuess(EntryData):
         super().normalize(archive, logger)
 
         if not (self.confirm_schema and self.columns and self.data_file):
-            return
-
-        if self.mapping_mode not in (None, 'column'):
-            logger.warning('Only column mapping mode is supported for generated schemas in this implementation')
             return
 
         from nomad_auto_upload_tables.schema_generation import build_generated_artifacts

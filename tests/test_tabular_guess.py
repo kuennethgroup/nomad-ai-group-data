@@ -116,29 +116,6 @@ def test_confirmed_review_generates_schema_and_entry_files(tmp_path):
     assert 'sample_id_2' not in quantities
 
 
-def test_ceramic_summary_fields_use_search_bridge_base_section(tmp_path):
-    raw_csv = tmp_path / 'ceramic.csv'
-    raw_csv.write_text('density_g_cm3,hardness_gpa\n3.1,12.0\n3.3,14.0\n')
-    archive = WritableFakeArchive(tmp_path, mainfile='ceramic.csv')
-    parser = TabularGuessParser()
-    parser.parse(str(raw_csv), archive)
-
-    review = yaml.safe_load((tmp_path / 'generated_reviews' / 'ceramic_review.archive.yaml').read_text())
-    entry = TabularGuess.m_from_dict(review['data'])
-    entry.confirm_schema = True
-    archive.data = entry
-
-    parser.after_normalization(archive)
-
-    generated_schema = yaml.safe_load((tmp_path / 'generated_schemas' / 'ceramic_schema.archive.yaml').read_text())
-    generated_entry = yaml.safe_load((tmp_path / 'generated_entries' / 'ceramic_entry.archive.yaml').read_text())
-    section = generated_schema['definitions']['sections']['Ceramic']
-    assert section['base_sections'][0] == 'nomad_auto_upload_tables.schema_packages.ceramics.CeramicTableData'
-    assert 'nomad.datamodel.data.EntryData' not in section['base_sections']
-    assert 'density_g_cm3_mean' not in section['quantities']
-    assert generated_entry['data']['density_g_cm3_mean'] == 3.2
-    assert generated_entry['data']['hardness_gpa_mean'] == 13.0
-
 
 def test_confirmed_review_does_not_clobber_generated_files_without_force(tmp_path):
     raw_csv = tmp_path / 'sample.csv'

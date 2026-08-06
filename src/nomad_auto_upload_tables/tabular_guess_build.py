@@ -29,28 +29,6 @@ from nomad_auto_upload_tables.guessing import (
 
 
 
-CERAMIC_TABLE_DATA_BASE_SECTION = 'nomad_auto_upload_tables.schema_packages.ceramics.CeramicTableData'
-CERAMIC_TABLE_SUMMARY_COLUMNS = {
-    'sintering_temperature_c',
-    'secondary_content_wt_percent',
-    'density_g_cm3',
-    'relative_density_percent',
-    'open_porosity_percent',
-    'hardness_gpa',
-    'youngs_modulus_gpa',
-    'flexural_strength_mpa',
-    'fracture_toughness_mpa_m05',
-    'wear_rate_mm3_nm',
-    'grain_size_um',
-}
-CERAMIC_TABLE_SUMMARY_NAMES = {
-    f'{column}_{suffix}'
-    for column in CERAMIC_TABLE_SUMMARY_COLUMNS
-    for suffix in ('mean', 'min', 'max')
-}
-
-
-
 def build_initial_guess(
     path: str,
     *,
@@ -194,13 +172,8 @@ def _with_search_summary_quantities(entry, archive, schema_yaml: str, entry_yaml
         quantities = section.setdefault('quantities', {})
         data = entry_payload.setdefault('data', {})
 
-        ceramic_summary_names = {name for name, _, _ in summaries if name in CERAMIC_TABLE_SUMMARY_NAMES}
-        if ceramic_summary_names:
-            _add_base_section(section, CERAMIC_TABLE_DATA_BASE_SECTION)
-
         for name, quantity, value in summaries:
-            if name not in CERAMIC_TABLE_SUMMARY_NAMES:
-                quantities[name] = quantity
+            quantities[name] = quantity
             data[name] = value
 
         return (
@@ -213,17 +186,6 @@ def _with_search_summary_quantities(entry, archive, schema_yaml: str, entry_yaml
         return schema_yaml, entry_yaml
 
 
-
-def _add_base_section(section: dict, base_section: str) -> None:
-    base_sections = section.setdefault('base_sections', [])
-    if base_section == CERAMIC_TABLE_DATA_BASE_SECTION and base_section not in base_sections:
-        base_sections[:] = [
-            existing
-            for existing in base_sections
-            if existing != 'nomad.datamodel.data.EntryData'
-        ]
-    if base_section not in base_sections:
-        base_sections.insert(0, base_section)
 
 def _read_source_table(entry, archive) -> pd.DataFrame:
     if not is_supported_table_file(entry.data_file):

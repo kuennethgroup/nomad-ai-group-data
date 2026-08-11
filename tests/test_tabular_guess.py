@@ -350,15 +350,15 @@ def test_parser_prefills_plot_controls_from_ai_suggestion(monkeypatch, tmp_path)
                 'category': 'temperature',
                 'confidence': 0.99,
             },
-            'Pressure (Pa)': {
+            'Pressure [Pa]': {
                 'guessed_name': 'pressure',
                 'guessed_type': 'float',
                 'guessed_unit': 'Pa',
                 'category': 'pressure',
                 'confidence': 0.99,
             },
-            'Notes': {
-                'guessed_name': 'notes',
+            'Yield (%)': {
+                'guessed_name': 'yield',
                 'guessed_type': 'float',
                 'guessed_unit': '',
                 'category': 'measurement_result',
@@ -367,13 +367,22 @@ def test_parser_prefills_plot_controls_from_ai_suggestion(monkeypatch, tmp_path)
             '__plot_suggestions__': {
                 'enabled_plots': ['xy_scatter', 'colored_scatter', 'parallel_coordinates', 'not_real'],
                 'plot_label': 'AI overview',
-                'plot_columns': ['temperature', 'pressure', 'notes'],
+                'plot_columns': ['temperature', 'pressure', 'yield'],
             },
         }
 
     monkeypatch.setattr('nomad_auto_upload_tables.ai_guessing.guess_with_ai', fake_guess_with_ai)
     raw_csv = tmp_path / 'sample.csv'
-    raw_csv.write_bytes((DATA_DIR / 'sample.csv').read_bytes())
+    # A genuinely all-numeric "Yield (%)" column, unlike sample.csv's text
+    # "Notes" column - guess_columns() now validates AI numeric-type claims
+    # against the real data (see _validated_numeric_type), so faking a float
+    # guess for an actually-text column would just get downgraded to string.
+    raw_csv.write_text(
+        'Sample ID,Temperature (K),Pressure [Pa],Yield (%)\n'
+        'S001,300.5,101325,92.1\n'
+        'S002,310.2,101300,88.4\n'
+        'S003,295.0,101400,95.0\n'
+    )
     archive = WritableFakeArchive(tmp_path, mainfile='sample.csv')
 
     TabularGuessParser(api_key='sk-test', model='some-model').parse(str(raw_csv), archive)
@@ -384,7 +393,7 @@ def test_parser_prefills_plot_controls_from_ai_suggestion(monkeypatch, tmp_path)
     assert review['data']['enable_histogram'] is False
     assert 'enable_parallel_coordinates' not in review['data']
     assert review['data']['plot_label'] == 'AI overview'
-    assert review['data']['plot_columns'] == 'temperature, pressure, notes'
+    assert review['data']['plot_columns'] == 'temperature, pressure, yield'
 
 
 def test_parser_uses_ai_guess_when_configured(monkeypatch, tmp_path):

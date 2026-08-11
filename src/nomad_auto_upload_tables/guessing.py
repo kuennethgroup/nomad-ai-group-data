@@ -238,6 +238,7 @@ def guess_columns(
             guessed_name = safe_quantity_name(ai_guess.get('guessed_name'), fallback_header=header_str)
             guessed_type = ai_guess.get('guessed_type')
             guessed_type = guessed_type if guessed_type in QUANTITY_TYPES else 'string'
+            guessed_type = _validated_numeric_type(guessed_type, series)
             guessed_unit = safe_unit(ai_guess.get('guessed_unit'))
             category = ai_guess.get('category')
             category = category if category in CATEGORIES else 'other'
@@ -262,6 +263,26 @@ def guess_columns(
             )
         )
     return link_uncertainty_columns(columns)
+
+
+def _validated_numeric_type(guessed_type: str, series: pd.Series) -> str:
+    """Only trust an "integer"/"float" claim if the column's actual values
+    support it.
+
+    The AI guesser only ever sees up to `MAX_SAMPLE_VALUES` sample values per
+    column (see `ai_guessing._column_summary`), so it can easily miss a
+    censored/threshold value like "<5", ">100", or "n.d." elsewhere in a
+    large column and call it numeric anyway. Left unchecked, that becomes
+    `type: np.float64` in the generated schema, and NOMAD's own tabular
+    parser only discovers the mismatch later - when it tries to cast the
+    whole raw column and crashes. `guess_type` reads pandas' actual dtype for
+    the full column, which is the ground truth here regardless of which path
+    produced the guess.
+    """
+    if guessed_type not in ('integer', 'float'):
+        return guessed_type
+    actual_type = guess_type(series)
+    return guessed_type if actual_type in ('integer', 'float') else actual_type
 
 
 def link_uncertainty_columns(columns: list[ColumnGuess]) -> list[ColumnGuess]:

@@ -244,6 +244,42 @@ def test_link_uncertainty_columns_dedupes_name_collisions():
     assert result[1].guessed_name == 'pressure_uncertainty_2'
 
 
+def test_ai_guess_of_float_is_overridden_when_column_has_censored_values():
+    # "<5" elsewhere in the column - the AI only sees a handful of sample
+    # values and can miss it, but the real column can't be cast to float.
+    df = pd.DataFrame({'value': ['1.2', '3.4', '<5', '5.6']})
+    ai_guesses = {
+        'value': {'guessed_name': 'value', 'guessed_type': 'float', 'guessed_unit': '', 'category': 'other', 'confidence': 0.9},
+    }
+
+    columns = {c.header: c for c in guess_columns(df, ai_guesses)}
+
+    assert columns['value'].guessed_type == 'string'
+
+
+def test_ai_guess_of_float_is_kept_when_column_really_is_numeric():
+    df = pd.DataFrame({'value': [1.2, 3.4, 5.6]})
+    ai_guesses = {
+        'value': {'guessed_name': 'value', 'guessed_type': 'float', 'guessed_unit': '', 'category': 'other', 'confidence': 0.9},
+    }
+
+    columns = {c.header: c for c in guess_columns(df, ai_guesses)}
+
+    assert columns['value'].guessed_type == 'float'
+
+
+def test_ai_guess_of_integer_is_kept_against_a_float_column():
+    # Both numeric - not the dangerous mismatch this guards against.
+    df = pd.DataFrame({'value': [1.0, 2.0, 3.0]})
+    ai_guesses = {
+        'value': {'guessed_name': 'value', 'guessed_type': 'integer', 'guessed_unit': '', 'category': 'other', 'confidence': 0.9},
+    }
+
+    columns = {c.header: c for c in guess_columns(df, ai_guesses)}
+
+    assert columns['value'].guessed_type == 'integer'
+
+
 def test_real_world_csv_fixtures_guess_expected_columns():
     expected = {
         'tabular_guess_test.csv': {

@@ -153,8 +153,8 @@ def test_confirmed_row_mode_generates_schema_and_row_entries(tmp_path):
     section = generated_schema['definitions']['sections']['Sample']
     quantities = section['quantities']
     assert section['base_sections'] == [
-        'nomad.datamodel.data.EntryData',
         'nomad.datamodel.metainfo.eln.ElnBaseSection',
+        'nomad.datamodel.data.EntryData',
     ]
     assert section['more']['label_quantity'] == 'sample_id'
     assert quantities['source_file']['type'] == 'str'

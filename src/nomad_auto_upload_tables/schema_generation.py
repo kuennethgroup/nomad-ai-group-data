@@ -207,7 +207,9 @@ def build_row_schema_dict(
     quantities['tags'] = _tags_quantity()
 
     section: dict[str, Any] = {
-        'base_sections': ['nomad.datamodel.data.EntryData', ELN_BASE_SECTION],
+        # ElnBaseSection must come first: see the comment on the column-mode
+        # base_sections list below for why order here isn't cosmetic.
+        'base_sections': [ELN_BASE_SECTION, 'nomad.datamodel.data.EntryData'],
         'm_annotations': {'eln': {'hide': ELN_HIDDEN_QUANTITIES, 'properties': {'order': order}}},
         'quantities': quantities,
     }
@@ -282,11 +284,20 @@ def build_schema_dict(
         annotations['plotly_graph_object'] = plotly_graph_objects
     quantities['tags'] = _tags_quantity()
     section: dict[str, Any] = {
+        # ElnBaseSection must be listed first, matching NOMAD's own convention
+        # (see BasicEln(ElnBaseSection, EntryData) in nomad.datamodel.metainfo.eln).
+        # ElnBaseSection.normalize() explicitly re-invokes EntryData.normalize(self, ...)
+        # after its own super().normalize() call already ran it once; that
+        # explicit call's own super() resolves against the *instance's* full
+        # MRO, so if EntryData comes before ElnBaseSection here, that second
+        # call chains straight back into ElnBaseSection.normalize() again -
+        # infinite recursion (confirmed empirically, not theoretical). With
+        # ElnBaseSection first, EntryData's super() chain never loops back.
         'base_sections': [
+            ELN_BASE_SECTION,
             'nomad.datamodel.data.EntryData',
             'nomad.parsing.tabular.TableData',
             'nomad.datamodel.metainfo.plot.PlotSection',
-            ELN_BASE_SECTION,
         ],
         'm_annotations': annotations,
         'quantities': quantities,
@@ -318,6 +329,13 @@ def build_entry_dict(
             'm_def': f'../uploads/archive/mainfile/{schema_file}#/definitions/sections/{section_name}',
             'data_file': str(data_file).strip().lstrip('/'),
             'fill_archive_from_datafile': True,
+            # ElnBaseSection.normalize() (inherited via ELN_BASE_SECTION) falls
+            # back to `archive.metadata.entry_name.split('.')...` when `name` is
+            # unset, and entry_name isn't populated yet at that point for these
+            # generated entries - it crashes with AttributeError on None. Setting
+            # name here avoids that path entirely, and doubles as a readable
+            # entry_name (ElnBaseSection copies it there when both are set).
+            'name': _title_from_identifier(section_name),
         }
     }
     results = build_results_dict(results_config or {})

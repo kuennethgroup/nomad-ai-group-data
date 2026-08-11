@@ -3,10 +3,10 @@ definitions:
   sections:
     ParticleSizeDistribution:
       base_sections:
+        - nomad.datamodel.metainfo.eln.ElnBaseSection
         - nomad.datamodel.data.EntryData
         - nomad.parsing.tabular.TableData
         - nomad.datamodel.metainfo.plot.PlotSection
-        - nomad.datamodel.metainfo.eln.ElnBaseSection
 
       m_annotations:
         eln:

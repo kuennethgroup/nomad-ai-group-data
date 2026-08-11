@@ -1,5 +1,27 @@
+import os
+import re
+
 from nomad.config.models.plugins import ParserEntryPoint
 from pydantic import Field
+
+# nomad.yaml is loaded by nomad-lab with plain `yaml.load(...)` - there is no
+# shell-style environment variable substitution anywhere in NOMAD's config
+# loading. A value like `api_key: '${MY_SECRET}'` in nomad.yaml (a very
+# natural thing to write, since that syntax works in docker-compose.yaml) is
+# therefore passed through completely literally, as the 'literal string
+# "${MY_SECRET}"' - not the environment variable's value. Resolve that
+# pattern ourselves so secrets can stay in the environment/.env file instead
+# of nomad.yaml.
+_ENV_VAR_PATTERN = re.compile(r'^\$\{(\w+)\}$')
+
+
+def _resolve_env_placeholder(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return value
+    match = _ENV_VAR_PATTERN.match(value.strip())
+    if not match:
+        return value
+    return os.environ.get(match.group(1), value)
 
 
 class TabularGuessParserEntryPoint(ParserEntryPoint):
@@ -9,7 +31,9 @@ class TabularGuessParserEntryPoint(ParserEntryPoint):
             'API key for the OpenAI-compatible chat completions endpoint used to '
             'guess column semantics. Set this (and `model`) via nomad.yaml under '
             'plugins.entry_points.options to enable AI-assisted guessing; without '
-            'it, the parser falls back to local heuristics.'
+            'it, the parser falls back to local heuristics. May be given as a '
+            'literal value or as `${ENV_VAR_NAME}`, resolved against the process '
+            'environment at load time (nomad.yaml itself does not do this).'
         ),
     )
     model: str | None = Field(
@@ -24,7 +48,10 @@ class TabularGuessParserEntryPoint(ParserEntryPoint):
     def load(self):
         from nomad_auto_upload_tables.parsers.tabular_guess import TabularGuessParser
 
-        return TabularGuessParser(**self.dict())
+        config = self.dict()
+        for key in ('api_key', 'model', 'base_url'):
+            config[key] = _resolve_env_placeholder(config.get(key))
+        return TabularGuessParser(**config)
 
 
 tabular_guess_parser = TabularGuessParserEntryPoint(

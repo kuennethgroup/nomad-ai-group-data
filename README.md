@@ -57,6 +57,18 @@ plugins:
         base_url: 'https://chat-ai.academiccloud.de/v1' # optional, this is the default
 ```
 
+`api_key` (and `model`/`base_url`) may also be given as `${ENV_VAR_NAME}`, e.g.
+`api_key: '${ACADEMIC_CLOUD_API_KEY}'`, which the parser resolves against its
+own process environment when it loads — **not** something `nomad.yaml` itself
+does. NOMAD's config loader is a plain `yaml.load(...)`; it never expands
+`${...}` placeholders, so writing that syntax without this plugin's support
+would silently send the literal string `${ACADEMIC_CLOUD_API_KEY}` as the API
+key (and NOMAD would log a `401 Unauthorized` from the AI endpoint, not an
+obviously-config-related error) while quietly falling back to local
+heuristics. This lets you keep secrets in the container's environment/`.env`
+file (e.g. an `environment:`/`env_file:` entry in `docker-compose.yaml`)
+instead of committing them into `nomad.yaml`.
+
 `base_url` defaults to GWDG's SAIA service
 (https://docs.hpc.gwdg.de/services/ai-services/saia/index.html), which is
 OpenAI-compatible, but any OpenAI-compatible chat completions endpoint works

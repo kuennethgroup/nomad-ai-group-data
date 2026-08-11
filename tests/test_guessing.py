@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from nomad_auto_upload_tables.guessing import (
+    ColumnGuess,
     clean_name,
     coerce_value,
     guess_category,
@@ -10,6 +12,8 @@ from nomad_auto_upload_tables.guessing import (
     guess_type,
     guess_unit,
     is_supported_table_file,
+    is_uncertainty_header,
+    link_uncertainty_columns,
     read_table,
 )
 
@@ -161,6 +165,83 @@ def test_read_table_rejects_archive_content_even_with_csv_suffix(tmp_path):
     assert is_supported_table_file(archive_file) is True
     with pytest.raises(ValueError, match='appears to be a NOMAD archive'):
         read_table(archive_file)
+
+
+def test_is_uncertainty_header_matches_common_markers():
+    for header in [
+        '+/-', '+-', '±', 'Error', 'error', 'Err.', 'Std Dev', 'std dev.',
+        'StdErr', 'Uncertainty', 'Uncertainties', 'unc.', '± [MPa]', 'Error (Pa)',
+    ]:
+        assert is_uncertainty_header(header), header
+
+
+def test_is_uncertainty_header_leaves_unrelated_headers_alone():
+    for header in ['Error Code', 'Sample Error Log', 'Pressure [MPa]', 'Notes']:
+        assert not is_uncertainty_header(header), header
+
+
+def test_guess_columns_links_uncertainty_column_to_previous_column():
+    df = pd.DataFrame({'Pressure [MPa]': [1.0, 2.0, 3.0], '+/-': [0.1, 0.2, 0.1]})
+    columns = {c.header: c for c in guess_columns(df)}
+
+    uncertainty = columns['+/-']
+    assert uncertainty.guessed_name == 'pressure_uncertainty'
+    assert uncertainty.guessed_unit == 'MPa'
+    assert uncertainty.category == 'uncertainty'
+
+
+def test_guess_columns_uncertainty_column_keeps_its_own_unit_if_present():
+    df = pd.DataFrame({'Pressure [MPa]': [1.0, 2.0], 'Error [kPa]': [10.0, 20.0]})
+    columns = {c.header: c for c in guess_columns(df)}
+
+    assert columns['Error [kPa]'].guessed_unit == 'kPa'
+    assert columns['Error [kPa]'].guessed_name == 'pressure_uncertainty'
+
+
+def test_guess_columns_links_each_uncertainty_column_to_its_own_predecessor():
+    df = pd.DataFrame({
+        'Pressure [MPa]': [1.0],
+        '+/-': [0.1],
+        'Temperature [K]': [300.0],
+        'Error': [1.0],
+    })
+    names = [c.guessed_name for c in guess_columns(df)]
+
+    assert names == ['pressure', 'pressure_uncertainty', 'temperature', 'temperature_uncertainty']
+
+
+def test_guess_columns_leading_uncertainty_column_is_left_alone():
+    # No preceding column to attach to - must not crash or be relabeled.
+    df = pd.DataFrame({'+/-': [0.1, 0.2]})
+    columns = guess_columns(df)
+
+    assert columns[0].category != 'uncertainty'
+
+
+def test_link_uncertainty_columns_dedupes_name_collisions():
+    columns = [
+        ColumnGuess(
+            header='Pressure [MPa]', guessed_name='pressure', guessed_type='float',
+            guessed_unit='MPa', category='pressure', confidence=0.8,
+            n_rows=3, n_missing=0, sample_values='1, 2, 3',
+        ),
+        ColumnGuess(
+            header='+/-', guessed_name='column', guessed_type='float',
+            guessed_unit='', category='other', confidence=0.2,
+            n_rows=3, n_missing=0, sample_values='0.1',
+        ),
+        # A genuine, unrelated column that happens to already use the name our
+        # linking pass would otherwise pick for the "+/-" column above.
+        ColumnGuess(
+            header='pressure_uncertainty', guessed_name='pressure_uncertainty', guessed_type='float',
+            guessed_unit='MPa', category='other', confidence=0.2,
+            n_rows=3, n_missing=0, sample_values='0.05',
+        ),
+    ]
+
+    result = link_uncertainty_columns(columns)
+
+    assert result[1].guessed_name == 'pressure_uncertainty_2'
 
 
 def test_real_world_csv_fixtures_guess_expected_columns():

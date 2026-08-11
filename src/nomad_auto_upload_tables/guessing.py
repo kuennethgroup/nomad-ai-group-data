@@ -17,6 +17,18 @@ import pandas.api.types as ptypes
 
 UNIT_PATTERN = re.compile(r'[\(\[]([^()\[\]]+)[\)\]]\s*$')
 
+# A column whose header is *only* one of these tokens (after stripping a
+# trailing unit like "(MPa)") carries no meaning on its own - it's the
+# uncertainty of whatever column precedes it (e.g. "Pressure [MPa]", "+/-").
+# Matched as a whole-string match, not a substring, so an unrelated header
+# like "Error Code" is left alone.
+UNCERTAINTY_HEADER_PATTERN = re.compile(
+    r'^(?:\+/-|\+-|±|std\.?\s*dev\.?|stdev|std\s*err\.?|stderr|sigma|'
+    r'uncertaint(?:y|ies)|unc\.?|error|err\.?)$',
+    re.IGNORECASE,
+)
+UNCERTAINTY_CATEGORY = 'uncertainty'
+
 # Keyword -> ontology category used to guess the semantic meaning of a column
 # from its header text. Order matters: first match wins, so more specific
 # keywords should come before more generic ones.
@@ -37,7 +49,7 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     'measurement_result': ['result', 'measurement', 'intensity', 'signal', 'value'],
 }
 
-CATEGORIES = [*CATEGORY_KEYWORDS.keys(), 'other']
+CATEGORIES = [*CATEGORY_KEYWORDS.keys(), UNCERTAINTY_CATEGORY, 'other']
 
 QUANTITY_TYPES = ['string', 'integer', 'float', 'boolean', 'datetime']
 
@@ -161,11 +173,21 @@ def guess_type(series: pd.Series) -> str:
     return 'string'
 
 
+def _strip_unit_suffix(header: str) -> str:
+    return UNIT_PATTERN.sub('', header).strip()
+
+
 def clean_name(header: str) -> str:
     """Turn a free-text header into a snake_case identifier, unit suffix stripped."""
-    without_unit = UNIT_PATTERN.sub('', header).strip()
+    without_unit = _strip_unit_suffix(header)
     name = re.sub(r'[^0-9a-zA-Z]+', '_', without_unit).strip('_').lower()
     return name or 'column'
+
+
+def is_uncertainty_header(header: str) -> bool:
+    """Whether `header` looks like it names the *uncertainty* of the previous
+    column rather than a measurement of its own (e.g. "+/-", "Error [MPa]")."""
+    return bool(UNCERTAINTY_HEADER_PATTERN.match(_strip_unit_suffix(str(header or ''))))
 
 
 def safe_quantity_name(value, *, fallback_header: str) -> str:
@@ -239,7 +261,42 @@ def guess_columns(
                 sample_values=sample,
             )
         )
+    return link_uncertainty_columns(columns)
+
+
+def link_uncertainty_columns(columns: list[ColumnGuess]) -> list[ColumnGuess]:
+    """Re-point columns like "+/-" or "Error [MPa]" at the column before them.
+
+    Spreadsheets commonly report an uncertainty in the column right after the
+    measurement it belongs to, with a header that's meaningless on its own
+    (see `UNCERTAINTY_HEADER_PATTERN`). Applied after AI/heuristic guessing
+    (`guess_columns` calls this unconditionally) so it corrects both paths the
+    same way, since a bare "+/-" carries no information an AI guess could
+    reliably use either.
+    """
+    used_names = {column.guessed_name for column in columns}
+    previous_non_uncertainty: ColumnGuess | None = None
+    for column in columns:
+        if previous_non_uncertainty is not None and is_uncertainty_header(column.header):
+            used_names.discard(column.guessed_name)
+            new_name = _unique_name(f'{previous_non_uncertainty.guessed_name}_uncertainty', used_names)
+            used_names.add(new_name)
+            column.guessed_name = new_name
+            column.guessed_unit = guess_unit(column.header) or previous_non_uncertainty.guessed_unit
+            column.category = UNCERTAINTY_CATEGORY
+            column.confidence = max(column.confidence, KNOWN_KEYWORD_CONFIDENCE)
+        else:
+            previous_non_uncertainty = column
     return columns
+
+
+def _unique_name(name: str, used_names: set[str]) -> str:
+    if name not in used_names:
+        return name
+    index = 2
+    while f'{name}_{index}' in used_names:
+        index += 1
+    return f'{name}_{index}'
 
 
 def coerce_value(raw_value, guessed_type: str):

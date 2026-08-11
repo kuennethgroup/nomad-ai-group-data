@@ -14,6 +14,18 @@ ENTRY_DIR = 'generated_entries'
 ROW_ENTRY_DIR = 'generated_row_entries'
 REVIEW_DIR = 'generated_reviews'
 
+# Every generated entry (column mode and row mode) inherits ElnBaseSection and
+# carries this fixed tag, which ElnBaseSection.normalize() copies into
+# results.eln.tags. That's what lets the "Tabular Data" Explore app
+# (apps/tabular_guess.py) find exactly the entries this plugin produced,
+# regardless of their per-upload section name.
+ELN_TAG = 'nomad_auto_upload_tables'
+ELN_BASE_SECTION = 'nomad.datamodel.metainfo.eln.ElnBaseSection'
+# ElnBaseSection also predefines name/datetime/lab_id/description, which this
+# plugin doesn't populate; hide them so the generated entry's edit form only
+# shows the columns imported from the table.
+ELN_HIDDEN_QUANTITIES = ['name', 'datetime', 'lab_id', 'description', 'tags']
+
 X_CATEGORY_PRIORITY = (
     'time',
     'length',
@@ -192,10 +204,11 @@ def build_row_schema_dict(
         if unit:
             quantity['unit'] = unit
         quantities[quantity_name] = quantity
+    quantities['tags'] = _tags_quantity()
 
     section: dict[str, Any] = {
-        'base_sections': ['nomad.datamodel.data.EntryData'],
-        'm_annotations': {'eln': {'properties': {'order': order}}},
+        'base_sections': ['nomad.datamodel.data.EntryData', ELN_BASE_SECTION],
+        'm_annotations': {'eln': {'hide': ELN_HIDDEN_QUANTITIES, 'properties': {'order': order}}},
         'quantities': quantities,
     }
     label_quantity = _label_quantity(columns)
@@ -262,16 +275,18 @@ def build_schema_dict(
         quantities[quantity_name] = quantity
 
     annotations: dict[str, Any] = {
-        'eln': {'properties': {'order': order}},
+        'eln': {'hide': ELN_HIDDEN_QUANTITIES, 'properties': {'order': order}},
     }
     plotly_graph_objects = _build_plotly_graph_objects(enabled_plots, plot_columns, plot_label, quantities)
     if plotly_graph_objects:
         annotations['plotly_graph_object'] = plotly_graph_objects
+    quantities['tags'] = _tags_quantity()
     section: dict[str, Any] = {
         'base_sections': [
             'nomad.datamodel.data.EntryData',
             'nomad.parsing.tabular.TableData',
             'nomad.datamodel.metainfo.plot.PlotSection',
+            ELN_BASE_SECTION,
         ],
         'm_annotations': annotations,
         'quantities': quantities,
@@ -829,6 +844,19 @@ def _included_columns(columns) -> list:
 
 def _quantity_name(column) -> str:
     return safe_quantity_name(getattr(column, 'guessed_name', None), fallback_header=str(column.header))
+
+
+def _tags_quantity() -> dict[str, Any]:
+    return {
+        'type': 'str',
+        'shape': ['*'],
+        'default': [ELN_TAG],
+        'description': (
+            'Fixed marker tag copied into results.eln.tags by ElnBaseSection, '
+            'used by the "Tabular Data" Explore app to find entries generated '
+            'by nomad-auto-upload-tables.'
+        ),
+    }
 
 
 def _base_name(path: str) -> str:

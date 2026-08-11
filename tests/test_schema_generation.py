@@ -61,6 +61,9 @@ def test_generated_schema_contains_native_nomad_tabular_shape(tmp_path):
     assert 'nomad.datamodel.data.EntryData' in section['base_sections']
     assert 'nomad.parsing.tabular.TableData' in section['base_sections']
     assert 'nomad.datamodel.metainfo.plot.PlotSection' in section['base_sections']
+    assert 'nomad.datamodel.metainfo.eln.ElnBaseSection' in section['base_sections']
+    assert quantities['tags']['default'] == ['nomad_auto_upload_tables']
+    assert 'tags' in section['m_annotations']['eln']['hide']
     assert quantities['data_file']['m_annotations']['browser']['adaptor'] == 'RawFileAdaptor'
     assert quantities['data_file']['m_annotations']['eln']['component'] == 'FileEditQuantity'
     mapping = quantities['data_file']['m_annotations']['tabular_parser']['mapping_options'][0]

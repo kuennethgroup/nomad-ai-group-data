@@ -77,25 +77,41 @@ def test_generated_schema_contains_native_nomad_tabular_shape(tmp_path):
     assert generated_entry['data']['fill_archive_from_datafile'] is True
 
 
-def test_all_combination_plots_covers_every_numeric_pair_and_categorical_bar(tmp_path):
+def test_all_combination_plots_covers_every_numeric_pair_histogram_and_heatmap(tmp_path):
     _, entry, _ = _parse_review_from_csv(tmp_path, 'sample.csv')
+    # enable_all_combination_plots already defaults to True; set explicitly for clarity.
     entry.enable_all_combination_plots = True
 
     schema = yaml.safe_load(build_generated_artifacts(entry).schema_yaml)
     section = next(iter(schema['definitions']['sections'].values()))
     plots = section['m_annotations']['plotly_graph_object']
     labels = {plot['label'] for plot in plots}
+    types = [plot['data']['type'] for plot in plots]
 
-    # sample.csv: temperature/pressure (numeric), sample_id/notes (string).
-    # 1 numeric-numeric pair + 2 categorical x 2 numeric bars + 2 standalone bars = 7.
-    assert len(plots) == 7
+    # sample.csv: temperature/pressure are the only numeric columns.
+    # 1 scatter pair + 2 histograms (one per numeric column) + 0 heatmaps (need 3 numeric) = 3.
+    assert len(plots) == 3
     assert 'Pressure vs Temperature' in labels
-    assert 'Temperature by Sample Id' in labels
-    assert 'Pressure by Notes' in labels
-    assert any(plot['data']['type'] == 'bar' and 'x' not in plot['data'] for plot in plots)
+    assert types.count('scatter') == 1
+    assert types.count('histogram') == 2
     assert [plot['index'] for plot in plots] == list(range(len(plots)))
     assert plots[0]['open'] is True
     assert all(plot['open'] is False for plot in plots[1:])
+
+
+def test_all_combination_plots_generates_heatmaps_for_numeric_triples(tmp_path):
+    _, entry, _ = _parse_review_from_csv(tmp_path, 'psd_curve.csv')
+    entry.enable_all_combination_plots = True
+
+    schema = yaml.safe_load(build_generated_artifacts(entry).schema_yaml)
+    section = next(iter(schema['definitions']['sections'].values()))
+    plots = section['m_annotations']['plotly_graph_object']
+    types = [plot['data']['type'] for plot in plots]
+
+    # psd_curve.csv has 3 numeric columns: C(3,2)=3 scatter, 3 histograms, C(3,3)=1 heatmap.
+    assert types.count('scatter') == 3
+    assert types.count('histogram') == 3
+    assert types.count('heatmap') == 1
 
 
 def test_all_combination_plots_overrides_the_single_plot_checkboxes(tmp_path):
@@ -108,7 +124,9 @@ def test_all_combination_plots_overrides_the_single_plot_checkboxes(tmp_path):
     section = next(iter(schema['definitions']['sections'].values()))
     plots = section['m_annotations']['plotly_graph_object']
 
-    assert not any(plot['data']['type'] == 'histogram' for plot in plots)
+    # Single-plot mode with this config would produce exactly one histogram
+    # of 'temperature'; combination mode's fuller default set wins instead.
+    assert len(plots) == 3
 
 
 def test_all_combination_plots_is_capped_for_wide_tables(tmp_path):
@@ -146,6 +164,7 @@ def test_generated_schema_excludes_columns_with_include_false(tmp_path):
 def test_psd_curve_schema_matches_reference_structure(tmp_path):
     _, entry, _ = _parse_review_from_csv(tmp_path, 'psd_curve.csv')
     entry.generated_section_name = 'ParticleSizeDistribution'
+    entry.enable_all_combination_plots = False
     artifacts = build_generated_artifacts(entry)
 
     generated = yaml.safe_load(artifacts.schema_yaml)
@@ -172,6 +191,7 @@ def test_psd_curve_schema_matches_reference_structure(tmp_path):
 def test_generated_schema_supports_multiple_enabled_plots(tmp_path):
     _, entry, _ = _parse_review_from_csv(tmp_path, 'psd_curve.csv')
     entry.generated_section_name = 'ParticleSizeDistribution'
+    entry.enable_all_combination_plots = False
     entry.enable_histogram = True
     entry.enable_violin = True
     entry.enable_area = True
@@ -424,6 +444,7 @@ def test_review_defaults_leave_multiple_formulas_blank():
 
 def test_invalid_enabled_plots_are_skipped(tmp_path):
     _, entry, _ = _parse_review_from_csv(tmp_path, 'sample.csv')
+    entry.enable_all_combination_plots = False
     entry.enable_scatter_3d = True
     entry.enable_heatmap = True
     entry.plot_columns = 'temperature, pressure'

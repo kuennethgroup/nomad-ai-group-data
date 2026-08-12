@@ -759,19 +759,18 @@ def _build_plotly_graph_objects(
     return _finalize_graph_objects(graph_objects)
 
 
-# Cap on auto-generated combination figures. A wide table has O(n^2) numeric
-# pairs alone; this keeps generation and the resulting entry reasonable while
-# still covering the overwhelming majority of real tables (n <= ~9 numeric
-# columns fits under this without truncation).
+# Cap on auto-generated combination figures. A wide table has O(n^2) scatter
+# pairs and O(n^3) heatmap triples; this keeps generation and the resulting
+# entry reasonable while still covering the overwhelming majority of real
+# tables uncapped (n <= ~5 numeric columns fits comfortably under this).
 MAX_COMBINATION_PLOTS = 40
 
 
 def _build_combination_plots(columns: list, quantities: dict[str, Any]) -> list[dict[str, Any]]:
-    """One scatter per pair of numeric columns, one bar chart per
-    (categorical, numeric) column pair, and one standalone bar chart per
-    numeric column (values in row order) - all as separate figures, so
-    NOMAD's entry Overview plot picker (see the `label` on each figure) lets
-    you switch between every meaningful column combination.
+    """One scatter per pair of numeric columns, one histogram per numeric
+    column, and one heatmap per triple of numeric columns - all as separate
+    figures, so NOMAD's entry Overview plot picker (see the `label` on each
+    figure) lets you switch between every meaningful column combination.
 
     This exists because NOMAD's cross-upload Explore dashboard widgets can't
     do this job: each upload gets its own one-off generated schema class, so
@@ -783,10 +782,6 @@ def _build_combination_plots(columns: list, quantities: dict[str, Any]) -> list[
     numeric_names = [
         name for c in columns
         if getattr(c, 'guessed_type', None) in NUMERIC_TYPES and (name := _quantity_name(c)) in quantities
-    ]
-    string_names = [
-        name for c in columns
-        if getattr(c, 'guessed_type', None) == 'string' and (name := _quantity_name(c)) in quantities
     ]
 
     graphs: list[dict[str, Any]] = []
@@ -802,29 +797,22 @@ def _build_combination_plots(columns: list, quantities: dict[str, Any]) -> list[
                 'layout': _xy_layout(label, x, y, quantities),
             })
 
-    for category in string_names:
-        for value in numeric_names:
-            if len(graphs) >= MAX_COMBINATION_PLOTS:
-                return _finalize_graph_objects(graphs)
-            label = f'{_title_from_identifier(value)} by {_title_from_identifier(category)}'
-            graphs.append({
-                'label': label,
-                'data': {'x': f'#{category}', 'y': f'#{value}', 'type': 'bar', 'name': _title_from_identifier(value)},
-                'layout': _xy_layout(label, category, value, quantities),
-            })
-
     for value in numeric_names:
         if len(graphs) >= MAX_COMBINATION_PLOTS:
             return _finalize_graph_objects(graphs)
-        label = _title_from_identifier(value)
-        graphs.append({
-            'label': _plot_object_label(label, 'bar'),
-            'data': {'y': f'#{value}', 'type': 'bar', 'name': label},
-            'layout': {
-                'title': {'text': label},
-                'yaxis': {'title': {'text': _axis_title(value, quantities[value].get('unit'))}},
-            },
-        })
+        graph = _plotly_graph_object('histogram', [value], _title_from_identifier(value), quantities)
+        if graph:
+            graphs.append(graph)
+
+    for i, x in enumerate(numeric_names):
+        for j, y in enumerate(numeric_names[i + 1 :], start=i + 1):
+            for z in numeric_names[j + 1 :]:
+                if len(graphs) >= MAX_COMBINATION_PLOTS:
+                    return _finalize_graph_objects(graphs)
+                label = f'{_title_from_identifier(z)} by {_title_from_identifier(x)}, {_title_from_identifier(y)}'
+                graph = _plotly_graph_object('heatmap', [x, y, z], label, quantities)
+                if graph:
+                    graphs.append(graph)
 
     return _finalize_graph_objects(graphs)
 

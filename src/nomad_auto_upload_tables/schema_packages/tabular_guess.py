@@ -113,11 +113,12 @@ class TabularGuess(EntryData):
 
     confirm_schema = Quantity(
         type=bool,
-        default=False,
+        default=True,
         description=(
-            'This entry is only a review of the guessed schema. After confirmation, '
-            'the plugin will create a YAML schema and a structured entry that imports '
-            'this same table with NOMAD\'s native tabular parser.'
+            'This entry is only a review of the guessed schema. While ticked, '
+            'the plugin creates a YAML schema and a structured entry that imports '
+            'this same table with NOMAD\'s native tabular parser; untick to hold off '
+            'and just review the guessed columns first.'
         ),
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.BoolEditQuantity,
@@ -126,9 +127,13 @@ class TabularGuess(EntryData):
     )
     force_regenerate = Quantity(
         type=bool,
-        default=False,
-        description='Overwrite existing generated schema/entry files on the next save.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity),
+        default=True,
+        description=(
+            'Overwrite existing generated schema/entry files on the next save. Not '
+            'shown in the edit form - always on, so correcting a column guess and '
+            'saving again actually takes effect instead of silently no-op\'ing '
+            'against already-generated files.'
+        ),
     )
     generated_section_name = Quantity(
         type=str,
@@ -151,87 +156,80 @@ class TabularGuess(EntryData):
         description='Generation mode. Column mode creates one entry per table with array quantities; row mode creates one scalar entry per table row.',
         a_eln=ELNAnnotation(component=ELNComponentEnum.EnumEditQuantity),
     )
+    # Not shown in the edit form: "All combination plots" (default on) covers the
+    # common case with no manual picking needed. These stay settable via the API
+    # for the case where someone wants exactly one specific plot instead - set
+    # enable_all_combination_plots=False and one of these plus plot_columns.
     enable_xy_scatter = Quantity(
         type=bool,
         default=False,
         description='Generate a Plotly XY scatter plot from the first two plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='XY scatter plot'),
     )
     enable_xy_line = Quantity(
         type=bool,
         default=False,
         description='Generate a Plotly XY line plot from the first two plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='XY line plot'),
     )
     enable_area = Quantity(
         type=bool,
         default=False,
         description='Generate a Plotly area plot from the first two plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Area plot'),
     )
     enable_bar = Quantity(
         type=bool,
         default=False,
         description='Generate a Plotly bar plot from the first two plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Bar plot'),
     )
     enable_histogram = Quantity(
         type=bool,
         default=False,
         description='Generate Plotly histogram traces from the selected plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Histogram'),
     )
     enable_box = Quantity(
         type=bool,
         default=False,
         description='Generate Plotly box traces from the selected plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Box plot'),
     )
     enable_violin = Quantity(
         type=bool,
         default=False,
         description='Generate Plotly violin traces from the selected plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Violin plot'),
     )
     enable_heatmap = Quantity(
         type=bool,
         default=False,
         description='Generate a Plotly heatmap from the first three plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Heatmap'),
     )
     enable_scatter_3d = Quantity(
         type=bool,
         default=False,
         description='Generate a Plotly 3D scatter plot from the first three plot columns.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='3D scatter plot'),
     )
     enable_colored_scatter = Quantity(
         type=bool,
         default=False,
         description='Generate a Plotly scatter plot using the third plot column as color.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Colored scatter plot'),
     )
     enable_all_combination_plots = Quantity(
         type=bool,
-        default=False,
+        default=True,
         description=(
-            'Generate one scatter plot per pair of numeric columns, one bar chart per '
-            'categorical-vs-numeric pair, and one standalone bar chart per numeric '
-            'column, each as a separate figure you can switch between with the plot '
-            'picker on the generated entry\'s Overview page. Overrides the plot type '
-            'checkboxes and plot columns below, which configure a single plot instead.'
+            'Generate one scatter plot per pair of numeric columns, one histogram '
+            'per numeric column, and one heatmap per triple of numeric columns, '
+            'each as a separate figure you can switch between with the plot picker '
+            'on the generated entry\'s Overview page. Overrides the plot type '
+            'checkboxes and plot columns below, which configure a single plot instead '
+            'and are hidden here for that reason.'
         ),
         a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='All combination plots'),
     )
     plot_label = Quantity(
         type=str,
         description='Shared base label for generated Plotly plots.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.StringEditQuantity, label='Plot label'),
     )
     plot_columns = Quantity(
         type=str,
         description='Comma-separated generated quantity names used by enabled plots, in order.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.StringEditQuantity, label='Plot columns'),
     )
     enable_results_material = Quantity(
         type=bool,

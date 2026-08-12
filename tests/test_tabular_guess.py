@@ -244,9 +244,23 @@ def test_row_mode_omits_invalid_values_and_deduplicates_row_ids(tmp_path):
     assert row3['flag'] is False
 
 
-def test_row_mode_does_not_clobber_files_without_force(tmp_path):
+def test_row_mode_regenerates_by_default_on_second_save(tmp_path):
+    # force_regenerate defaults to True (hidden from the edit form) precisely
+    # so correcting a column guess and saving again takes effect.
     parser, archive, entry = _confirmed_review_from_file(tmp_path, 'sample.csv')
     entry.mapping_mode = 'row'
+    parser.after_normalization(archive)
+
+    row_file = tmp_path / 'generated_row_entries' / 'sample' / 'S001.archive.yaml'
+    row_file.write_text('sentinel: true\n')
+    parser.after_normalization(archive)
+    assert 'source_row: 1' in row_file.read_text()
+
+
+def test_row_mode_does_not_clobber_files_with_force_explicitly_off(tmp_path):
+    parser, archive, entry = _confirmed_review_from_file(tmp_path, 'sample.csv')
+    entry.mapping_mode = 'row'
+    entry.force_regenerate = False
     parser.after_normalization(archive)
 
     row_file = tmp_path / 'generated_row_entries' / 'sample' / 'S001.archive.yaml'
@@ -309,7 +323,9 @@ def test_xlsx_row_mode_generates_row_entries(tmp_path):
     assert (tmp_path / 'generated_row_entries' / 'sample' / 'S001.archive.yaml').exists()
 
 
-def test_confirmed_review_does_not_clobber_generated_files_without_force(tmp_path):
+def test_confirmed_review_regenerates_by_default_on_second_save(tmp_path):
+    # force_regenerate defaults to True (hidden from the edit form) precisely
+    # so correcting a column guess and saving again takes effect.
     raw_csv = tmp_path / 'sample.csv'
     raw_csv.write_bytes((DATA_DIR / 'sample.csv').read_bytes())
     archive = WritableFakeArchive(tmp_path, mainfile='sample.csv')
@@ -318,6 +334,25 @@ def test_confirmed_review_does_not_clobber_generated_files_without_force(tmp_pat
     review = yaml.safe_load((tmp_path / 'generated_reviews' / 'sample_review.archive.yaml').read_text())
     entry = TabularGuess.m_from_dict(review['data'])
     entry.confirm_schema = True
+    archive.data = entry
+    parser.after_normalization(archive)
+
+    schema_file = tmp_path / 'generated_schemas' / 'sample_schema.archive.yaml'
+    schema_file.write_text('sentinel: true\n')
+    parser.after_normalization(archive)
+    assert 'definitions:' in schema_file.read_text()
+
+
+def test_confirmed_review_does_not_clobber_generated_files_with_force_explicitly_off(tmp_path):
+    raw_csv = tmp_path / 'sample.csv'
+    raw_csv.write_bytes((DATA_DIR / 'sample.csv').read_bytes())
+    archive = WritableFakeArchive(tmp_path, mainfile='sample.csv')
+    parser = TabularGuessParser()
+    parser.parse(str(raw_csv), archive)
+    review = yaml.safe_load((tmp_path / 'generated_reviews' / 'sample_review.archive.yaml').read_text())
+    entry = TabularGuess.m_from_dict(review['data'])
+    entry.confirm_schema = True
+    entry.force_regenerate = False
     archive.data = entry
     parser.after_normalization(archive)
 

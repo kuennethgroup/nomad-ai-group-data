@@ -61,8 +61,6 @@ definitions:
           type: str
           m_annotations:
             tabular_parser:
-              parsing_options:
-                comment: "#"
               mapping_options:
                 - mapping_mode: column
                   file_mode: current_entry

@@ -243,7 +243,15 @@ def build_schema_dict(
             'type': 'str',
             'm_annotations': {
                 'tabular_parser': {
-                    'parsing_options': {'comment': '#'},
+                    # No `parsing_options: {comment: ...}` here: pandas' `comment`
+                    # handling blanks the *entire row across every column* if
+                    # any cell anywhere in that row starts with the comment
+                    # character - not just that one cell (confirmed empirically).
+                    # A hardcoded '#' silently corrupted any table with a '#' in
+                    # any column (SMILES nitrile/triple-bond notation "C#N",
+                    # hex colors, "Batch #3" sample IDs, ...), turning genuine
+                    # data into NaN for a reason that had nothing to do with the
+                    # source file at all.
                     'mapping_options': [
                         {
                             'mapping_mode': 'column',

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 from nomad_auto_upload_tables.parsers.tabular_guess import TabularGuessParser
@@ -7,6 +8,29 @@ from nomad_auto_upload_tables.schema_generation import build_generated_artifacts
 from nomad_auto_upload_tables.schema_packages.tabular_guess import TabularGuess
 
 DATA_DIR = Path(__file__).parent / 'data'
+
+
+def test_pandas_comment_option_blanks_the_entire_row_not_just_the_matching_cell(tmp_path):
+    """Documents *why* generated schemas must not set parsing_options.comment.
+
+    This isn't specific to our code - it's pandas' own `comment=` semantics,
+    confirmed here so a future re-addition of `comment: '#'` (e.g. to support
+    literal comment-header lines in a CSV) fails this test immediately rather
+    than silently corrupting any table where '#' appears anywhere, in any
+    column, not just the one being read.
+    """
+    xlsx = tmp_path / 'demo.xlsx'
+    pd.DataFrame({
+        'sample': ['s1', 's2', '#s3', 's4'],
+        'repeat_unit': ['[*]CC([*])(F)F', '[*]CC([*])(F)F', '[*]CCCCCCCCCCCNC([*])=C', '[*]CCCCCCCCCCCNC([*])=C'],
+    }).to_excel(xlsx, index=False)
+
+    df = pd.read_excel(xlsx, comment='#')
+
+    # 's3' starts with '#' - not in repeat_unit at all - yet the whole row 2
+    # (every column) comes back NaN, not just the 'sample' cell.
+    assert df['sample'].isna().tolist() == [False, False, True, False]
+    assert df['repeat_unit'].isna().tolist() == [False, False, True, False]
 
 
 class _Context:
@@ -68,6 +92,13 @@ def test_generated_schema_contains_native_nomad_tabular_shape(tmp_path):
     assert quantities['data_file']['m_annotations']['eln']['component'] == 'FileEditQuantity'
     mapping = quantities['data_file']['m_annotations']['tabular_parser']['mapping_options'][0]
     assert mapping == {'mapping_mode': 'column', 'file_mode': 'current_entry', 'sections': ['#root']}
+    # No comment character configured: pandas' `comment` handling blanks an
+    # entire row (across every column) if any cell anywhere in that row
+    # starts with the comment character - confirmed empirically, not just
+    # theoretical. A hardcoded '#' silently turned genuine data (SMILES
+    # nitrile/triple-bond "C#N", hex colors, "Batch #3" IDs, ...) into NaN
+    # for reasons that had nothing to do with the source file being messy.
+    assert 'parsing_options' not in quantities['data_file']['m_annotations']['tabular_parser']
     assert quantities['temperature']['shape'] == ['*']
     assert quantities['temperature']['type'] == 'np.float64'
     assert quantities['temperature']['unit'] == 'K'

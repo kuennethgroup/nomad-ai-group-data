@@ -19,7 +19,21 @@ from nomad_auto_upload_tables.schema_generation import ELN_TAG
 # stable across every upload, so a dashboard widget can bind to them with a
 # JMESPath filter on `property_name`. See that module's docstring for why the
 # per-upload generated schema's own quantities (pressure, temperature, ...)
-# can never be used this way.
+# can never be used this way, and why TableValue's own quantities must be
+# scalars (shape == []) for this to work at all.
+#
+# NOMAD only exposes schema-package quantities as
+# `data.<dotted path>#<fully qualified class name>` (see
+# nomad.metainfo.elasticsearch_extension.reload_quantities_dynamic) - plain
+# `values.property_name` (no `data.` prefix, no `#<class>` suffix) is never a
+# valid search_quantity, dynamic or not.
+_TABLE_VALUES_CLASS = 'nomad_auto_upload_tables.schema_packages.table_values.TableValues'
+
+
+def _table_values_quantity(path: str) -> str:
+    return f'data.{path}#{_TABLE_VALUES_CLASS}'
+
+
 app_config = App(
     label='Tabular Data',
     path='tabular-data',
@@ -39,8 +53,8 @@ app_config = App(
         'as those names - edit it (or add a new scatter/histogram widget) to '
         'plot any other pair by property name, e.g.:\n\n'
         '```\n'
-        "x: values[?property_name=='<name>'].numeric_value[]\n"
-        "y: values[?property_name=='<other_name>'].numeric_value[]\n"
+        f"x: data.values[?property_name=='<name>'].numeric_value#{_TABLE_VALUES_CLASS}\n"
+        f"y: data.values[?property_name=='<other_name>'].numeric_value#{_TABLE_VALUES_CLASS}\n"
         '```\n\n'
         'Check "Property names" in the menu for which names are actually '
         'available to plot.'
@@ -68,7 +82,7 @@ app_config = App(
             Menu(title='Column values', items=[MenuItemCustomQuantities()]),
             Menu(
                 title='Property names',
-                items=[MenuItemTerms(search_quantity='values.property_name', options=20)],
+                items=[MenuItemTerms(search_quantity=_table_values_quantity('values.property_name'), options=20)],
             ),
         ]
     ),
@@ -82,11 +96,11 @@ app_config = App(
                     'xl': Layout(h=8, w=12, x=0, y=0),
                 },
                 x={
-                    'search_quantity': "values[?property_name=='temperature'].numeric_value[]",
+                    'search_quantity': _table_values_quantity("values[?property_name=='temperature'].numeric_value"),
                     'title': 'Temperature',
                 },
                 y={
-                    'search_quantity': "values[?property_name=='pressure'].numeric_value[]",
+                    'search_quantity': _table_values_quantity("values[?property_name=='pressure'].numeric_value"),
                     'title': 'Pressure',
                 },
             ),

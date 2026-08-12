@@ -12,14 +12,23 @@ that registry, no matter how they're configured.
 `TableValue`/`TableValues` are defined once, here, as a normal plugin schema
 package - so unlike the per-upload schema, their quantities *are* stable,
 searchable, and widget-bindable across every upload. A confirmed table's
-columns are additionally written out as `TableValue` entries (alongside, not
-instead of, the per-upload native schema/entry), each with a `property_name`
-naming the column (e.g. "pressure") and its full run of values. A dashboard
-widget can then plot across every upload that happens to have a matching
-`property_name`, e.g.:
+values are additionally written out as `TableValue` entries (alongside, not
+instead of, the per-upload native schema/entry) in *long format*: one
+`TableValue` per (row, column), not one array-valued `TableValue` per
+column. That's not a style choice - NOMAD only registers *scalar* quantities
+(shape == []) as dynamic search quantities; an array-shaped quantity is
+invisible to Explore dashboard widgets no matter how it's referenced
+(confirmed directly against
+`nomad.metainfo.elasticsearch_extension.create_dynamic_quantity_annotation`,
+which unconditionally returns `None` when `quantity_def.shape != []`).
 
-    x: {search_quantity: "values[?property_name=='temperature'].numeric_value[]"}
-    y: {search_quantity: "values[?property_name=='pressure'].numeric_value[]"}
+Each `TableValue` has a `property_name` naming the column (e.g. "pressure").
+A dashboard widget can plot across every upload that happens to have a
+matching `property_name`, using NOMAD's dynamic-quantity naming
+(`data.<path>#<qualified class name>`) with a JMESPath filter, e.g.:
+
+    x: {search_quantity: "data.values[?property_name=='temperature'].numeric_value#nomad_auto_upload_tables.schema_packages.table_values.TableValues"}
+    y: {search_quantity: "data.values[?property_name=='pressure'].numeric_value#nomad_auto_upload_tables.schema_packages.table_values.TableValues"}
 """
 
 from nomad.datamodel.data import ArchiveSection, EntryData
@@ -38,8 +47,9 @@ _HIDDEN_ELN_FIELDS = ['name', 'datetime', 'lab_id', 'description', 'tags']
 
 
 class TableValue(ArchiveSection):
-    """One column's full run of values from a confirmed table, under a fixed
-    property_name so it can be found and plotted across every upload."""
+    """One column's value for one row of a confirmed table, under a fixed
+    property_name so it can be found and plotted across every upload. All
+    value quantities are scalars (see module docstring for why)."""
 
     property_name = Quantity(
         type=str,
@@ -53,15 +63,17 @@ class TableValue(ArchiveSection):
         type=str,
         description='Pint-compatible unit string for numeric_value, if any.',
     )
+    source_row = Quantity(
+        type=int,
+        description='One-based source table row number this value came from.',
+    )
     numeric_value = Quantity(
         type=float,
-        shape=['*'],
-        description='This column\'s values, for float/integer columns.',
+        description='This value, for float/integer columns.',
     )
     string_value = Quantity(
         type=str,
-        shape=['*'],
-        description='This column\'s values, for string/boolean/datetime columns.',
+        description='This value, for string/boolean/datetime columns.',
     )
 
 

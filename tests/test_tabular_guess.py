@@ -184,10 +184,15 @@ def test_confirmed_row_mode_generates_schema_and_row_entries(tmp_path):
     assert table_values_file.exists()
     table_values = yaml.safe_load(table_values_file.read_text())
     assert table_values['data']['m_def'] == 'nomad_auto_upload_tables.schema_packages.table_values.TableValues'
-    by_property = {v['property_name']: v for v in table_values['data']['values']}
-    assert by_property['temperature']['numeric_value'] == [300.5, 310.2, 295.0]
-    assert by_property['temperature']['unit'] == 'K'
-    assert by_property['sample_id']['string_value'] == ['S001', 'S002', 'S003']
+    # Long format: one TableValue per (row, column), not one array-valued
+    # TableValue per column - NOMAD only registers scalar quantities as
+    # dynamic search quantities usable in Explore dashboard widgets.
+    by_property = _group_table_values_by_property(table_values['data']['values'])
+    assert by_property['temperature'] == [(1, 300.5), (2, 310.2), (3, 295.0)]
+    assert all(v['unit'] == 'K' for v in table_values['data']['values'] if v['property_name'] == 'temperature')
+    assert [v['string_value'] for v in table_values['data']['values'] if v['property_name'] == 'sample_id'] == [
+        'S001', 'S002', 'S003',
+    ]
 
 
 def test_confirmed_column_mode_generates_table_values_companion_entry(tmp_path):
@@ -202,13 +207,23 @@ def test_confirmed_column_mode_generates_table_values_companion_entry(tmp_path):
     assert data['m_def'] == 'nomad_auto_upload_tables.schema_packages.table_values.TableValues'
     assert data['source_file'] == 'sample.csv'
     assert data['name'] == 'Sample values'
-    by_property = {v['property_name']: v for v in data['values']}
-    assert by_property['temperature']['numeric_value'] == [300.5, 310.2, 295.0]
-    assert by_property['temperature']['category'] == 'temperature'
-    assert by_property['temperature']['unit'] == 'K'
-    assert by_property['pressure']['numeric_value'] == [101325, 101300, 101400]
-    assert by_property['sample_id']['string_value'] == ['S001', 'S002', 'S003']
-    assert 'numeric_value' not in by_property['sample_id']
+    by_property = _group_table_values_by_property(data['values'])
+    assert by_property['temperature'] == [(1, 300.5), (2, 310.2), (3, 295.0)]
+    assert by_property['pressure'] == [(1, 101325), (2, 101300), (3, 101400)]
+    temperature_values = [v for v in data['values'] if v['property_name'] == 'temperature']
+    assert all(v['category'] == 'temperature' and v['unit'] == 'K' for v in temperature_values)
+    sample_id_values = [v for v in data['values'] if v['property_name'] == 'sample_id']
+    assert [v['string_value'] for v in sample_id_values] == ['S001', 'S002', 'S003']
+    assert all('numeric_value' not in v for v in sample_id_values)
+
+
+def _group_table_values_by_property(values: list[dict]) -> dict[str, list[tuple[int, float]]]:
+    grouped: dict[str, list[tuple[int, float]]] = {}
+    for value in values:
+        if 'numeric_value' not in value:
+            continue
+        grouped.setdefault(value['property_name'], []).append((value['source_row'], value['numeric_value']))
+    return grouped
 
 
 def test_row_mode_omits_invalid_values_and_deduplicates_row_ids(tmp_path):

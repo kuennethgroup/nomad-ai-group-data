@@ -420,10 +420,17 @@ def _build_table_values_file(entry, archive) -> tuple[str, str] | None:
 
 def _table_values_file(entry, df: pd.DataFrame, columns) -> tuple[str, str] | None:
     """Build the (path, yaml) for a `TableValues` companion entry (see
-    `schema_packages.table_values`): one `TableValue` per column, under a
-    fixed, plugin-schema quantity shape that's searchable and
+    `schema_packages.table_values`): one `TableValue` per (row, column), in
+    a fixed, plugin-schema quantity shape that's searchable and
     widget-bindable across every upload - unlike the per-upload generated
     schema `columns` are otherwise mapped into.
+
+    Long format (one scalar-valued TableValue per row) rather than one
+    array-valued TableValue per column: NOMAD only registers *scalar*
+    quantities (shape == []) as dynamic search quantities usable in Explore
+    dashboard widgets - an array-shaped quantity is invisible to them no
+    matter how it's referenced (confirmed against
+    nomad.metainfo.elasticsearch_extension.create_dynamic_quantity_annotation).
     """
     from nomad_auto_upload_tables.schema_generation import (
         TABLE_VALUES_DIR,
@@ -435,37 +442,45 @@ def _table_values_file(entry, df: pd.DataFrame, columns) -> tuple[str, str] | No
     )
 
     base = _base_name(entry.data_file or 'table')
-    values: list[dict] = []
+    column_specs = []
     for column in columns:
         header = getattr(column, 'header', None)
         if header not in df.columns:
             continue
         quantity_name = _quantity_name(column)
         guessed_type = str(getattr(column, 'guessed_type', '') or 'string')
-        category = str(getattr(column, 'category', '') or '')
-        series = df[header].dropna()
-        if series.empty:
-            continue
-
-        value: dict = {'property_name': quantity_name}
-        if category:
-            value['category'] = category
-
+        category = str(getattr(column, 'category', '') or '') or None
+        unit = None
         if guessed_type in ('float', 'integer'):
-            numeric = pd.to_numeric(series, errors='coerce').dropna()
-            if numeric.empty:
-                continue
-            value['numeric_value'] = [_clean_summary_float(v) for v in numeric]
-            unit = _canonical_unit(str(getattr(column, 'guessed_unit', '') or ''), quantity_name, category)
-            if unit:
-                value['unit'] = unit
-        else:
-            strings = [str(v) for v in series]
-            if not strings:
-                continue
-            value['string_value'] = strings
+            unit = _canonical_unit(str(getattr(column, 'guessed_unit', '') or ''), quantity_name, category or '') or None
+        column_specs.append((header, quantity_name, guessed_type, category, unit))
 
-        values.append(value)
+    if not column_specs:
+        return None
+
+    values: list[dict] = []
+    for zero_index, (_, row) in enumerate(df.iterrows()):
+        source_row = zero_index + 1
+        for header, quantity_name, guessed_type, category, unit in column_specs:
+            raw_value = row[header]
+            if pd.isna(raw_value):
+                continue
+
+            value: dict = {'property_name': quantity_name, 'source_row': source_row}
+            if category:
+                value['category'] = category
+
+            if guessed_type in ('float', 'integer'):
+                numeric = pd.to_numeric(raw_value, errors='coerce')
+                if pd.isna(numeric):
+                    continue
+                value['numeric_value'] = _clean_summary_float(numeric)
+                if unit:
+                    value['unit'] = unit
+            else:
+                value['string_value'] = str(raw_value)
+
+            values.append(value)
 
     if not values:
         return None

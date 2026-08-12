@@ -211,6 +211,18 @@ class TabularGuess(EntryData):
         description='Generate a Plotly scatter plot using the third plot column as color.',
         a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Colored scatter plot'),
     )
+    enable_all_combination_plots = Quantity(
+        type=bool,
+        default=False,
+        description=(
+            'Generate one scatter plot per pair of numeric columns, one bar chart per '
+            'categorical-vs-numeric pair, and one standalone bar chart per numeric '
+            'column, each as a separate figure you can switch between with the plot '
+            'picker on the generated entry\'s Overview page. Overrides the plot type '
+            'checkboxes and plot columns below, which configure a single plot instead.'
+        ),
+        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='All combination plots'),
+    )
     plot_label = Quantity(
         type=str,
         description='Shared base label for generated Plotly plots.',

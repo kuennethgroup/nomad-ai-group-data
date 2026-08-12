@@ -77,6 +77,60 @@ def test_generated_schema_contains_native_nomad_tabular_shape(tmp_path):
     assert generated_entry['data']['fill_archive_from_datafile'] is True
 
 
+def test_all_combination_plots_covers_every_numeric_pair_and_categorical_bar(tmp_path):
+    _, entry, _ = _parse_review_from_csv(tmp_path, 'sample.csv')
+    entry.enable_all_combination_plots = True
+
+    schema = yaml.safe_load(build_generated_artifacts(entry).schema_yaml)
+    section = next(iter(schema['definitions']['sections'].values()))
+    plots = section['m_annotations']['plotly_graph_object']
+    labels = {plot['label'] for plot in plots}
+
+    # sample.csv: temperature/pressure (numeric), sample_id/notes (string).
+    # 1 numeric-numeric pair + 2 categorical x 2 numeric bars + 2 standalone bars = 7.
+    assert len(plots) == 7
+    assert 'Pressure vs Temperature' in labels
+    assert 'Temperature by Sample Id' in labels
+    assert 'Pressure by Notes' in labels
+    assert any(plot['data']['type'] == 'bar' and 'x' not in plot['data'] for plot in plots)
+    assert [plot['index'] for plot in plots] == list(range(len(plots)))
+    assert plots[0]['open'] is True
+    assert all(plot['open'] is False for plot in plots[1:])
+
+
+def test_all_combination_plots_overrides_the_single_plot_checkboxes(tmp_path):
+    _, entry, _ = _parse_review_from_csv(tmp_path, 'sample.csv')
+    entry.enable_all_combination_plots = True
+    entry.enable_histogram = True
+    entry.plot_columns = 'temperature'
+
+    schema = yaml.safe_load(build_generated_artifacts(entry).schema_yaml)
+    section = next(iter(schema['definitions']['sections'].values()))
+    plots = section['m_annotations']['plotly_graph_object']
+
+    assert not any(plot['data']['type'] == 'histogram' for plot in plots)
+
+
+def test_all_combination_plots_is_capped_for_wide_tables(tmp_path):
+    _, entry, _ = _parse_review_from_csv(tmp_path, 'sample.csv')
+    entry.enable_all_combination_plots = True
+    extra_columns = []
+    for i in range(10):
+        column = type(entry.columns[0])(**{
+            key: getattr(entry.columns[1], key) for key in ('header', 'guessed_type', 'guessed_unit', 'category', 'include')
+        })
+        column.header = f'Extra {i}'
+        column.guessed_name = f'extra_{i}'
+        extra_columns.append(column)
+    entry.columns = list(entry.columns) + extra_columns
+
+    schema = yaml.safe_load(build_generated_artifacts(entry).schema_yaml)
+    section = next(iter(schema['definitions']['sections'].values()))
+    plots = section['m_annotations']['plotly_graph_object']
+
+    assert len(plots) == 40
+
+
 def test_generated_schema_excludes_columns_with_include_false(tmp_path):
     _, entry, _ = _parse_review_from_csv(tmp_path, 'sample.csv')
     by_header = {column.header: column for column in entry.columns}

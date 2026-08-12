@@ -154,6 +154,7 @@ def build_generated_artifacts(entry) -> GeneratedArtifacts:
         enabled_plots=enabled_plots,
         plot_columns=plot_columns,
         plot_label=plot_label,
+        all_combination_plots=bool(getattr(entry, 'enable_all_combination_plots', False)),
     )
     entry_dict = build_entry_dict(
         schema_file=schema_file,
@@ -234,6 +235,7 @@ def build_schema_dict(
     enabled_plots: list[str] | tuple[str, ...] = (),
     plot_columns: list[str] | tuple[str, ...] = (),
     plot_label: str | None,
+    all_combination_plots: bool = False,
 ) -> dict[str, Any]:
     quantities: dict[str, Any] = {
         'data_file': {
@@ -279,7 +281,10 @@ def build_schema_dict(
     annotations: dict[str, Any] = {
         'eln': {'hide': ELN_HIDDEN_QUANTITIES, 'properties': {'order': order}},
     }
-    plotly_graph_objects = _build_plotly_graph_objects(enabled_plots, plot_columns, plot_label, quantities)
+    if all_combination_plots:
+        plotly_graph_objects = _build_combination_plots(columns, quantities)
+    else:
+        plotly_graph_objects = _build_plotly_graph_objects(enabled_plots, plot_columns, plot_label, quantities)
     if plotly_graph_objects:
         annotations['plotly_graph_object'] = plotly_graph_objects
     quantities['tags'] = _tags_quantity()
@@ -749,10 +754,85 @@ def _build_plotly_graph_objects(
         graph = _plotly_graph_object(plot_type, selected, plot_label or 'Plot', quantities)
         if graph is None:
             continue
-        graph['index'] = len(graph_objects)
-        graph['open'] = len(graph_objects) == 0
         graph_objects.append(graph)
-    return graph_objects
+    return _finalize_graph_objects(graph_objects)
+
+
+# Cap on auto-generated combination figures. A wide table has O(n^2) numeric
+# pairs alone; this keeps generation and the resulting entry reasonable while
+# still covering the overwhelming majority of real tables (n <= ~9 numeric
+# columns fits under this without truncation).
+MAX_COMBINATION_PLOTS = 40
+
+
+def _build_combination_plots(columns: list, quantities: dict[str, Any]) -> list[dict[str, Any]]:
+    """One scatter per pair of numeric columns, one bar chart per
+    (categorical, numeric) column pair, and one standalone bar chart per
+    numeric column (values in row order) - all as separate figures, so
+    NOMAD's entry Overview plot picker (see the `label` on each figure) lets
+    you switch between every meaningful column combination.
+
+    This exists because NOMAD's cross-upload Explore dashboard widgets can't
+    do this job: each upload gets its own one-off generated schema class, so
+    there's no shared, stable search_quantity path a dashboard widget could
+    bind to across uploads (see apps/__init__.py). Per-entry PlotSection
+    figures don't have that problem - they're scoped to the one schema this
+    function already has in hand.
+    """
+    numeric_names = [
+        name for c in columns
+        if getattr(c, 'guessed_type', None) in NUMERIC_TYPES and (name := _quantity_name(c)) in quantities
+    ]
+    string_names = [
+        name for c in columns
+        if getattr(c, 'guessed_type', None) == 'string' and (name := _quantity_name(c)) in quantities
+    ]
+
+    graphs: list[dict[str, Any]] = []
+
+    for index, x in enumerate(numeric_names):
+        for y in numeric_names[index + 1 :]:
+            if len(graphs) >= MAX_COMBINATION_PLOTS:
+                return _finalize_graph_objects(graphs)
+            label = f'{_title_from_identifier(y)} vs {_title_from_identifier(x)}'
+            graphs.append({
+                'label': label,
+                'data': {'x': f'#{x}', 'y': f'#{y}', 'type': 'scatter', 'mode': 'markers', 'name': _title_from_identifier(y)},
+                'layout': _xy_layout(label, x, y, quantities),
+            })
+
+    for category in string_names:
+        for value in numeric_names:
+            if len(graphs) >= MAX_COMBINATION_PLOTS:
+                return _finalize_graph_objects(graphs)
+            label = f'{_title_from_identifier(value)} by {_title_from_identifier(category)}'
+            graphs.append({
+                'label': label,
+                'data': {'x': f'#{category}', 'y': f'#{value}', 'type': 'bar', 'name': _title_from_identifier(value)},
+                'layout': _xy_layout(label, category, value, quantities),
+            })
+
+    for value in numeric_names:
+        if len(graphs) >= MAX_COMBINATION_PLOTS:
+            return _finalize_graph_objects(graphs)
+        label = _title_from_identifier(value)
+        graphs.append({
+            'label': _plot_object_label(label, 'bar'),
+            'data': {'y': f'#{value}', 'type': 'bar', 'name': label},
+            'layout': {
+                'title': {'text': label},
+                'yaxis': {'title': {'text': _axis_title(value, quantities[value].get('unit'))}},
+            },
+        })
+
+    return _finalize_graph_objects(graphs)
+
+
+def _finalize_graph_objects(graphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for index, graph in enumerate(graphs):
+        graph['index'] = index
+        graph['open'] = index == 0
+    return graphs
 
 
 def _plotly_graph_object(plot_type: str, columns: list[str], label: str, quantities: dict[str, Any]) -> dict[str, Any] | None:

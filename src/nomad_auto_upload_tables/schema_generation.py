@@ -13,6 +13,7 @@ SCHEMA_DIR = 'generated_schemas'
 ENTRY_DIR = 'generated_entries'
 ROW_ENTRY_DIR = 'generated_row_entries'
 REVIEW_DIR = 'generated_reviews'
+TABLE_VALUES_DIR = 'generated_table_values'
 
 # Every generated entry (column mode and row mode) inherits ElnBaseSection and
 # carries this fixed tag, which ElnBaseSection.normalize() copies into

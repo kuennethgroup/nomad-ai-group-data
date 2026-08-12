@@ -24,6 +24,7 @@ dev = [
 
 [project.entry-points.'nomad.plugin']
 tabular_guess_schema = "nomad_auto_upload_tables.schema_packages:tabular_guess_schema"
+table_values_schema = "nomad_auto_upload_tables.schema_packages:table_values_schema"
 tabular_guess_parser = "nomad_auto_upload_tables.parsers:tabular_guess_parser"
 tabular_guess_app = "nomad_auto_upload_tables.apps:tabular_guess_app"
 

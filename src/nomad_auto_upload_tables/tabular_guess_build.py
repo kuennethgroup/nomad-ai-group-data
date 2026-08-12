@@ -139,12 +139,16 @@ def write_generated_artifacts(entry, archive, artifacts, *, logger=None) -> list
         entry, archive, artifacts.schema_yaml, artifacts.entry_yaml, artifacts, logger=logger
     )
     entry_yaml = _with_concrete_schema_reference(entry_yaml, artifacts, archive)
+    files = [
+        (artifacts.schema_file, schema_yaml),
+        (artifacts.entry_file, entry_yaml),
+    ]
+    table_values_file = _build_table_values_file(entry, archive)
+    if table_values_file:
+        files.append(table_values_file)
     return _write_generated_files(
         context,
-        (
-            (artifacts.schema_file, schema_yaml),
-            (artifacts.entry_file, entry_yaml),
-        ),
+        files,
         force=getattr(entry, 'force_regenerate', False),
         logger=logger,
     )
@@ -155,9 +159,14 @@ def _write_generated_row_artifacts(entry, archive, artifacts, *, logger=None) ->
     df = _read_source_table(entry, archive)
     schema_ref = _schema_m_def_ref(artifacts, archive)
     row_files = _row_entry_files(entry, df, artifacts, schema_ref)
+    files = [(artifacts.schema_file, artifacts.schema_yaml), *row_files]
+    included = [column for column in entry.columns if getattr(column, 'include', True) is not False]
+    table_values_file = _table_values_file(entry, df, included)
+    if table_values_file:
+        files.append(table_values_file)
     return _write_generated_files(
         context,
-        ((artifacts.schema_file, artifacts.schema_yaml), *row_files),
+        files,
         force=getattr(entry, 'force_regenerate', False),
         logger=logger,
     )
@@ -396,6 +405,81 @@ def _search_summaries(entry, df: pd.DataFrame) -> list[tuple[str, dict, object]]
 
     return summaries
 
+
+def _build_table_values_file(entry, archive) -> tuple[str, str] | None:
+    """Column-mode entry point: reads the source table itself, then delegates
+    to `_table_values_file`. Row mode already has `df` on hand and calls
+    `_table_values_file` directly instead (see `_write_generated_row_artifacts`)."""
+    try:
+        df = _read_source_table(entry, archive)
+    except Exception:  # noqa: BLE001 - this companion entry is best-effort
+        return None
+    included = [column for column in entry.columns if getattr(column, 'include', True) is not False]
+    return _table_values_file(entry, df, included)
+
+
+def _table_values_file(entry, df: pd.DataFrame, columns) -> tuple[str, str] | None:
+    """Build the (path, yaml) for a `TableValues` companion entry (see
+    `schema_packages.table_values`): one `TableValue` per column, under a
+    fixed, plugin-schema quantity shape that's searchable and
+    widget-bindable across every upload - unlike the per-upload generated
+    schema `columns` are otherwise mapped into.
+    """
+    from nomad_auto_upload_tables.schema_generation import (
+        TABLE_VALUES_DIR,
+        _base_name,
+        _canonical_unit,
+        _dump_yaml,
+        _quantity_name,
+        _title_from_identifier,
+    )
+
+    base = _base_name(entry.data_file or 'table')
+    values: list[dict] = []
+    for column in columns:
+        header = getattr(column, 'header', None)
+        if header not in df.columns:
+            continue
+        quantity_name = _quantity_name(column)
+        guessed_type = str(getattr(column, 'guessed_type', '') or 'string')
+        category = str(getattr(column, 'category', '') or '')
+        series = df[header].dropna()
+        if series.empty:
+            continue
+
+        value: dict = {'property_name': quantity_name}
+        if category:
+            value['category'] = category
+
+        if guessed_type in ('float', 'integer'):
+            numeric = pd.to_numeric(series, errors='coerce').dropna()
+            if numeric.empty:
+                continue
+            value['numeric_value'] = [_clean_summary_float(v) for v in numeric]
+            unit = _canonical_unit(str(getattr(column, 'guessed_unit', '') or ''), quantity_name, category)
+            if unit:
+                value['unit'] = unit
+        else:
+            strings = [str(v) for v in series]
+            if not strings:
+                continue
+            value['string_value'] = strings
+
+        values.append(value)
+
+    if not values:
+        return None
+
+    payload = {
+        'data': {
+            'm_def': 'nomad_auto_upload_tables.schema_packages.table_values.TableValues',
+            'name': f'{_title_from_identifier(base)} values',
+            'source_file': str(entry.data_file or '').strip().lstrip('/'),
+            'values': values,
+        }
+    }
+    path = f'{TABLE_VALUES_DIR}/{base}_values.archive.yaml'
+    return path, _dump_yaml(payload)
 
 
 def _clean_summary_float(value) -> float:

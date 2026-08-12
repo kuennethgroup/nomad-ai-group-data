@@ -180,6 +180,36 @@ def test_confirmed_row_mode_generates_schema_and_row_entries(tmp_path):
     generated_entry = yaml.safe_load((row_dir / 'S002.archive.yaml').read_text())
     assert 'notes' not in generated_entry['data']
 
+    table_values_file = tmp_path / 'generated_table_values' / 'sample_values.archive.yaml'
+    assert table_values_file.exists()
+    table_values = yaml.safe_load(table_values_file.read_text())
+    assert table_values['data']['m_def'] == 'nomad_auto_upload_tables.schema_packages.table_values.TableValues'
+    by_property = {v['property_name']: v for v in table_values['data']['values']}
+    assert by_property['temperature']['numeric_value'] == [300.5, 310.2, 295.0]
+    assert by_property['temperature']['unit'] == 'K'
+    assert by_property['sample_id']['string_value'] == ['S001', 'S002', 'S003']
+
+
+def test_confirmed_column_mode_generates_table_values_companion_entry(tmp_path):
+    parser, archive, entry = _confirmed_review_from_file(tmp_path, 'sample.csv')
+
+    parser.after_normalization(archive)
+
+    table_values_file = tmp_path / 'generated_table_values' / 'sample_values.archive.yaml'
+    assert table_values_file.exists()
+    table_values = yaml.safe_load(table_values_file.read_text())
+    data = table_values['data']
+    assert data['m_def'] == 'nomad_auto_upload_tables.schema_packages.table_values.TableValues'
+    assert data['source_file'] == 'sample.csv'
+    assert data['name'] == 'Sample values'
+    by_property = {v['property_name']: v for v in data['values']}
+    assert by_property['temperature']['numeric_value'] == [300.5, 310.2, 295.0]
+    assert by_property['temperature']['category'] == 'temperature'
+    assert by_property['temperature']['unit'] == 'K'
+    assert by_property['pressure']['numeric_value'] == [101325, 101300, 101400]
+    assert by_property['sample_id']['string_value'] == ['S001', 'S002', 'S003']
+    assert 'numeric_value' not in by_property['sample_id']
+
 
 def test_row_mode_omits_invalid_values_and_deduplicates_row_ids(tmp_path):
     raw_csv = tmp_path / 'rows.csv'

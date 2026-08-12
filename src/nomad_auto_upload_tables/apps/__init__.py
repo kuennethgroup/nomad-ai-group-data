@@ -2,15 +2,24 @@ from nomad.config.models.plugins import AppEntryPoint
 from nomad.config.models.ui import (
     App,
     Column,
+    Dashboard,
+    Layout,
     Menu,
     MenuItemCustomQuantities,
     MenuItemDefinitions,
     MenuItemHistogram,
     MenuItemTerms,
+    WidgetScatterPlot,
 )
 
 from nomad_auto_upload_tables.schema_generation import ELN_TAG
 
+# TableValues/TableValue (schema_packages/table_values.py) are a fixed plugin
+# schema, unlike the per-upload generated schema - their quantities are
+# stable across every upload, so a dashboard widget can bind to them with a
+# JMESPath filter on `property_name`. See that module's docstring for why the
+# per-upload generated schema's own quantities (pressure, temperature, ...)
+# can never be used this way.
 app_config = App(
     label='Tabular Data',
     path='tabular-data',
@@ -24,7 +33,17 @@ app_config = App(
         'uploaded spreadsheet/CSV file: one entry per table in column mode, '
         'or one entry per source row in row mode. Use "Generated schema" to '
         'filter by the schema a given upload produced, or "Column values" to '
-        'search by any of its guessed quantities.'
+        'search by any of its guessed quantities.\n\n'
+        'The "Temperature vs pressure (example)" dashboard widget plots '
+        '`TableValue` entries across *every* upload that has columns guessed '
+        'as those names - edit it (or add a new scatter/histogram widget) to '
+        'plot any other pair by property name, e.g.:\n\n'
+        '```\n'
+        "x: values[?property_name=='<name>'].numeric_value[]\n"
+        "y: values[?property_name=='<other_name>'].numeric_value[]\n"
+        '```\n\n'
+        'Check "Property names" in the menu for which names are actually '
+        'available to plot.'
     ),
     filters_locked={'results.eln.tags': ELN_TAG},
     columns=[
@@ -47,6 +66,30 @@ app_config = App(
                 ],
             ),
             Menu(title='Column values', items=[MenuItemCustomQuantities()]),
+            Menu(
+                title='Property names',
+                items=[MenuItemTerms(search_quantity='values.property_name', options=20)],
+            ),
+        ]
+    ),
+    dashboard=Dashboard(
+        widgets=[
+            WidgetScatterPlot(
+                title='Temperature vs pressure (example)',
+                layout={
+                    'md': Layout(h=8, w=12, x=0, y=0),
+                    'lg': Layout(h=8, w=12, x=0, y=0),
+                    'xl': Layout(h=8, w=12, x=0, y=0),
+                },
+                x={
+                    'search_quantity': "values[?property_name=='temperature'].numeric_value[]",
+                    'title': 'Temperature',
+                },
+                y={
+                    'search_quantity': "values[?property_name=='pressure'].numeric_value[]",
+                    'title': 'Pressure',
+                },
+            ),
         ]
     ),
 )

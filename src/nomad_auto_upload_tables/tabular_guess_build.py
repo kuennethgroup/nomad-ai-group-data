@@ -438,10 +438,16 @@ def _table_values_file(entry, df: pd.DataFrame, columns) -> tuple[str, str] | No
         _canonical_unit,
         _dump_yaml,
         _quantity_name,
+        _section_name,
         _title_from_identifier,
     )
 
     base = _base_name(entry.data_file or 'table')
+    # Same resolution the generated schema/entry names use, so editing
+    # generated_section_name on the review entry also renames this file -
+    # previously this fell back to the raw filename unconditionally, so it
+    # went stale the moment someone renamed the section.
+    section_name = _section_name(getattr(entry, 'generated_section_name', None), base, columns)
     column_specs = []
     for column in columns:
         header = getattr(column, 'header', None)
@@ -488,7 +494,7 @@ def _table_values_file(entry, df: pd.DataFrame, columns) -> tuple[str, str] | No
     payload = {
         'data': {
             'm_def': 'nomad_auto_upload_tables.schema_packages.table_values.TableValues',
-            'name': f'{_title_from_identifier(base)} values',
+            'name': f'{_title_from_identifier(section_name)} values',
             'source_file': str(entry.data_file or '').strip().lstrip('/'),
             'values': values,
         }

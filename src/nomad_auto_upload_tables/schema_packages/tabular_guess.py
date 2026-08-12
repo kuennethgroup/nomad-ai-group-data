@@ -280,6 +280,17 @@ class TabularGuess(EntryData):
     def normalize(self, archive, logger):
         super().normalize(archive, logger)
 
+        if self.data_file and archive.metadata:
+            from nomad_auto_upload_tables.schema_generation import _base_name, _section_name, _title_from_identifier
+
+            base = _base_name(self.data_file)
+            section_name = _section_name(self.generated_section_name, base, self.columns)
+            # EntryData.normalize() (super(), above) already defaulted this to
+            # the raw mainfile name; override with something readable, and
+            # keep it in sync with generated_section_name edits like the
+            # generated schema/entry/table-values names already are.
+            archive.metadata.entry_name = f'{_title_from_identifier(section_name)} review'
+
         if not (self.confirm_schema and self.columns and self.data_file):
             return
 

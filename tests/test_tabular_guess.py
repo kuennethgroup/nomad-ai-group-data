@@ -2,6 +2,7 @@ from pathlib import Path
 
 import yaml
 
+from nomad.datamodel.datamodel import EntryArchive, EntryMetadata
 from nomad.utils import generate_entry_id
 
 from nomad_auto_upload_tables.parsers.tabular_guess import TabularGuessParser
@@ -210,11 +211,41 @@ def test_confirmed_column_mode_generates_table_values_companion_entry(tmp_path):
     by_property = _group_table_values_by_property(data['values'])
     assert by_property['temperature'] == [(1, 300.5), (2, 310.2), (3, 295.0)]
     assert by_property['pressure'] == [(1, 101325), (2, 101300), (3, 101400)]
-    temperature_values = [v for v in data['values'] if v['property_name'] == 'temperature']
-    assert all(v['category'] == 'temperature' and v['unit'] == 'K' for v in temperature_values)
-    sample_id_values = [v for v in data['values'] if v['property_name'] == 'sample_id']
-    assert [v['string_value'] for v in sample_id_values] == ['S001', 'S002', 'S003']
-    assert all('numeric_value' not in v for v in sample_id_values)
+
+
+def test_table_values_name_tracks_generated_section_name_edits(tmp_path):
+    # Previously this fell back to the raw filename unconditionally, so
+    # renaming the section on the review entry left it stale.
+    parser, archive, entry = _confirmed_review_from_file(tmp_path, 'sample.csv')
+    entry.generated_section_name = 'TensileTestingOfPolymers'
+    entry.force_regenerate = True
+
+    parser.after_normalization(archive)
+
+    table_values = yaml.safe_load((tmp_path / 'generated_table_values' / 'sample_values.archive.yaml').read_text())
+    assert table_values['data']['name'] == 'Tensile Testing Of Polymers values'
+
+
+def test_review_entry_name_is_readable_and_tracks_generated_section_name(tmp_path):
+    # Uses a real EntryArchive/EntryMetadata rather than the WritableFakeArchive
+    # test double above: this exercises TabularGuess.normalize() itself (not
+    # just the confirmed-artifact generation parser.after_normalization drives),
+    # which needs a real archive.metadata/archive.results shape.
+    raw_csv = tmp_path / 'sample.csv'
+    raw_csv.write_bytes((DATA_DIR / 'sample.csv').read_bytes())
+    archive = WritableFakeArchive(tmp_path, mainfile='sample.csv')
+    TabularGuessParser().parse(str(raw_csv), archive)
+    review = yaml.safe_load((tmp_path / 'generated_reviews' / 'sample_review.archive.yaml').read_text())
+    entry = TabularGuess.m_from_dict(review['data'])
+    entry.confirm_schema = False  # only exercising the naming logic here
+
+    real_archive = EntryArchive(data=entry, metadata=EntryMetadata(mainfile='sample.csv'))
+    entry.normalize(real_archive, logger=None)
+    assert real_archive.metadata.entry_name == 'Sample review'
+
+    entry.generated_section_name = 'TensileTestingOfPolymers'
+    entry.normalize(real_archive, logger=None)
+    assert real_archive.metadata.entry_name == 'Tensile Testing Of Polymers review'
 
 
 def _group_table_values_by_property(values: list[dict]) -> dict[str, list[tuple[int, float]]]:

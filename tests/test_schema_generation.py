@@ -126,8 +126,9 @@ def test_all_combination_plots_covers_every_numeric_pair_histogram_and_heatmap(t
     assert types.count('scatter') == 1
     assert types.count('histogram') == 2
     assert [plot['index'] for plot in plots] == list(range(len(plots)))
-    assert plots[0]['open'] is True
-    assert all(plot['open'] is False for plot in plots[1:])
+    # All open by default: otherwise the Overview plot picker hides every
+    # figure but the first, forcing a click per plot to see the rest.
+    assert all(plot['open'] is True for plot in plots)
 
 
 def test_all_combination_plots_generates_heatmaps_for_numeric_triples(tmp_path):
@@ -235,8 +236,9 @@ def test_generated_schema_supports_multiple_enabled_plots(tmp_path):
 
     assert 'plotly_subplots' not in section['m_annotations']
     assert [plot['index'] for plot in plots] == [0, 1, 2, 3, 4]
-    assert plots[0]['open'] is True
-    assert plots[1]['open'] is False
+    # All open by default: otherwise the Overview plot picker hides every
+    # figure but the first, forcing a click per plot to see the rest.
+    assert all(plot['open'] is True for plot in plots)
     assert plots[0]['data']['type'] == 'scatter'
     assert plots[1]['data']['fill'] == 'tozeroy'
     assert plots[2]['data']['type'] == 'histogram'

@@ -826,9 +826,12 @@ def _build_combination_plots(columns: list, quantities: dict[str, Any]) -> list[
 
 
 def _finalize_graph_objects(graphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # All open by default: the entry Overview's plot picker otherwise hides
+    # every figure but the first, forcing a click per plot to see the rest -
+    # defeats the point of generating the full combination set up front.
     for index, graph in enumerate(graphs):
         graph['index'] = index
-        graph['open'] = index == 0
+        graph['open'] = True
     return graphs
 
 

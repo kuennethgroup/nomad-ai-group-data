@@ -9,6 +9,7 @@ from nomad.config.models.ui import (
     MenuItemDefinitions,
     MenuItemHistogram,
     MenuItemTerms,
+    SearchQuantities,
     WidgetScatterPlot,
 )
 
@@ -60,6 +61,18 @@ app_config = App(
         'available to plot.'
     ),
     filters_locked={'results.eln.tags': ELN_TAG},
+    # NOMAD only lists a *dynamic* quantity (every quantity from a schema
+    # package, including all of TabularGuess's and TableValues's) as
+    # selectable in a widget's "Search quantity" autocomplete when it matches
+    # `search_quantities.include`. The App default is `include=None`, and the
+    # GUI's `glob(name, include, exclude)` returns `false` - excluding the
+    # quantity from that list - whenever `include` is empty, regardless of
+    # `exclude`. Without this, our quantities are correctly registered and
+    # queryable (confirmed via the search API and the "Property names" menu,
+    # which references a fixed search_quantity string directly and so never
+    # goes through this check), yet still show as "is not available" in any
+    # widget editor that lets the user pick a quantity by name.
+    search_quantities=SearchQuantities(include=['data.*#nomad_auto_upload_tables.*']),
     columns=[
         Column(search_quantity='entry_name', selected=True),
         Column(search_quantity='entry_type', selected=True, title='Generated schema'),

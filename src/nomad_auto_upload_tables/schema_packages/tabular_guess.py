@@ -9,7 +9,7 @@ entry archive files that use NOMAD's built-in tabular parser.
 
 from nomad.datamodel.data import ArchiveSection, EntryData
 from nomad.datamodel.metainfo.annotations import ELNAnnotation, ELNComponentEnum
-from nomad.metainfo import MEnum, Quantity, SchemaPackage, SubSection
+from nomad.metainfo import MEnum, Quantity, SchemaPackage, Section, SubSection
 
 from nomad_auto_upload_tables.guessing import CATEGORIES, QUANTITY_TYPES
 
@@ -34,6 +34,11 @@ PLOT_CHECKBOXES = (
 class GuessedColumn(ArchiveSection):
     """One spreadsheet column together with the guessed and user-corrected
     semantic meaning, type, unit, and ontology-ish category."""
+
+    m_def = Section(a_eln=ELNAnnotation(properties={
+        'visible': {'include': ['guessed_name', 'guessed_type', 'guessed_unit', 'category', 'include']},
+        'order': ['guessed_name', 'guessed_type', 'guessed_unit', 'category', 'include'],
+    }))
 
     header = Quantity(type=str, description='Original column header text.')
     sample_values = Quantity(
@@ -67,8 +72,12 @@ class GuessedColumn(ArchiveSection):
         type=bool,
         default=True,
         description='Whether to include this column in the generated NOMAD schema.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity),
+        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, props={'variant': 'checkbox'}),
     )
+
+    def normalize(self, archive, logger):
+        _materialize_defaults(self)
+        super().normalize(archive, logger)
 
 
 class GuessedProperty(ArchiveSection):
@@ -94,6 +103,23 @@ class TabularGuess(EntryData):
     native tabular parser then imports this same source table into array
     quantities.
     """
+
+    m_def = Section(a_eln=ELNAnnotation(properties={
+        'visible': {'include': [
+            'data_file', 'confirm_schema', 'generated_section_name',
+            'generated_schema_file', 'generated_entry_file', 'mapping_mode',
+            'enable_all_combination_plots', 'enable_results_material',
+            'material_formula', 'material_name', 'structural_type', 'dimensionality',
+            'enable_results_method', 'method_name', 'workflow_name', 'columns',
+        ]},
+        'order': [
+            'data_file', 'confirm_schema', 'generated_section_name',
+            'generated_schema_file', 'generated_entry_file', 'mapping_mode',
+            'enable_all_combination_plots', 'enable_results_material',
+            'material_formula', 'material_name', 'structural_type', 'dimensionality',
+            'enable_results_method', 'method_name', 'workflow_name', 'columns',
+        ],
+    }))
 
     data_file = Quantity(
         type=str,
@@ -123,6 +149,7 @@ class TabularGuess(EntryData):
         a_eln=ELNAnnotation(
             component=ELNComponentEnum.BoolEditQuantity,
             label='Generate NOMAD schema and entry',
+            props={'variant': 'checkbox'},
         ),
     )
     force_regenerate = Quantity(
@@ -221,7 +248,7 @@ class TabularGuess(EntryData):
             'checkboxes and plot columns below, which configure a single plot instead '
             'and are hidden here for that reason.'
         ),
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='All combination plots'),
+        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='All combination plots', props={'variant': 'checkbox'}),
     )
     plot_label = Quantity(
         type=str,
@@ -235,7 +262,7 @@ class TabularGuess(EntryData):
         type=bool,
         default=False,
         description='Populate NOMAD results.material in the generated entry for formula/element search.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Add results material'),
+        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Add results material', props={'variant': 'checkbox'}),
     )
     material_formula = Quantity(
         type=str,
@@ -261,7 +288,7 @@ class TabularGuess(EntryData):
         type=bool,
         default=False,
         description='Populate basic NOMAD results.method metadata in the generated entry.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Add results method'),
+        a_eln=ELNAnnotation(component=ELNComponentEnum.BoolEditQuantity, label='Add results method', props={'variant': 'checkbox'}),
     )
     method_name = Quantity(
         type=str,
@@ -278,6 +305,11 @@ class TabularGuess(EntryData):
     rows = SubSection(section=GuessedRow.m_def, repeats=True)
 
     def normalize(self, archive, logger):
+        # GUI v2 reads stored values, not Python metainfo defaults. Preserve
+        # explicit choices (including False) and persist only missing defaults.
+        _materialize_defaults(self)
+        for column in self.columns:
+            _materialize_defaults(column)
         super().normalize(archive, logger)
 
         if self.data_file and archive.metadata:
@@ -302,6 +334,12 @@ class TabularGuess(EntryData):
             write_generated_artifacts(self, archive, artifacts, logger=logger)
         except Exception as e:  # noqa: BLE001 - report to the user via the processing log
             logger.error('Failed to generate NOMAD schema and entry from confirmed tabular review', exc_info=e)
+
+
+def _materialize_defaults(section):
+    for name, quantity in section.m_def.all_quantities.items():
+        if quantity.default is not None and not section.m_is_set(name):
+            setattr(section, name, getattr(section, name))
 
 
 m_package.__init_metainfo__()

@@ -149,6 +149,20 @@ mechanism applies wherever your Oasis image build configures its plugin
 list — find the project that builds the image your `docker-compose.yaml`
 references and add this plugin there.
 
+## Review forms in classic GUI and GUI v2
+
+The review schemas explicitly specify visible fields and their order. Internal
+plot settings, diagnostics, and deprecated row previews remain available in the
+archive/API but are not part of the review form. Boolean controls use checkboxes.
+
+New review files explicitly store generation defaults. Normalization also stores
+missing schema defaults for older reviews, without replacing saved choices such
+as `confirm_schema: false`. After deploying an updated plugin image, existing
+processed reviews need reprocessing to acquire these stored values; a browser
+refresh alone cannot update their archives. Reprocessing confirmed reviews can
+regenerate their derived schema/data files, as in the existing workflow, so do
+not bulk-reprocess production uploads without reviewing that impact first.
+
 ## License
 
 Copyright (c) 2026 Kuenneth Research Group. Licensed under

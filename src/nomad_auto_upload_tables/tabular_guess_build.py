@@ -131,7 +131,7 @@ def write_generated_artifacts(entry, archive, artifacts, *, logger=None) -> list
     Existing files are left untouched unless ``entry.force_regenerate`` is true.
     Returns the list of files that were written or scheduled.
     """
-    if getattr(artifacts, 'mapping_mode', 'column') == 'row':
+    if getattr(artifacts, 'mapping_mode', 'Entire table as one entry (Recommended)') == 'One entry per row':
         return _write_generated_row_artifacts(entry, archive, artifacts, logger=logger)
 
     context = archive.m_context

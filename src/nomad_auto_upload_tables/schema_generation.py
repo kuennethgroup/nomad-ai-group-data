@@ -118,16 +118,16 @@ class GeneratedArtifacts:
     enabled_plots: tuple[str, ...] = ()
     plot_columns: tuple[str, ...] = ()
     plot_label: str | None = None
-    mapping_mode: str = 'column'
+    mapping_mode: str = 'Entire table as one entry (Recommended)'
 
 
 def build_generated_artifacts(entry) -> GeneratedArtifacts:
     base = _base_name(entry.data_file or 'table')
-    mapping_mode = str(getattr(entry, 'mapping_mode', None) or 'column')
+    mapping_mode = str(getattr(entry, 'mapping_mode', None) or 'Entire table as one entry (Recommended)')
     section_name = _section_name(getattr(entry, 'generated_section_name', None), base, entry.columns)
     columns = _included_columns(entry.columns)
 
-    if mapping_mode == 'row':
+    if mapping_mode == 'One entry per row':
         schema_file = _row_schema_path(getattr(entry, 'generated_schema_file', None), base)
         schema_dict = build_row_schema_dict(
             section_name=section_name,
@@ -140,7 +140,7 @@ def build_generated_artifacts(entry) -> GeneratedArtifacts:
             section_name=section_name,
             schema_yaml=_dump_yaml(schema_dict),
             entry_yaml='',
-            mapping_mode='row',
+            mapping_mode='One entry per row',
         )
 
     schema_file = _defaulted_path(getattr(entry, 'generated_schema_file', None), SCHEMA_DIR, f'{base}_schema.archive.yaml')
@@ -174,7 +174,7 @@ def build_generated_artifacts(entry) -> GeneratedArtifacts:
         enabled_plots=tuple(enabled_plots),
         plot_columns=tuple(plot_columns),
         plot_label=plot_label,
-        mapping_mode='column',
+        mapping_mode='Entire table as one entry (Recommended)',
     )
 
 
@@ -389,7 +389,7 @@ def build_review_dict(
             'generated_section_name': section_name,
             'generated_schema_file': generated_schema_file,
             'generated_entry_file': generated_entry_file,
-            'mapping_mode': 'column',
+            'mapping_mode': 'Entire table as one entry (Recommended)',
             'enable_xy_scatter': 'xy_scatter' in enabled_plots,
             'enable_xy_line': 'xy_line' in enabled_plots,
             'enable_area': 'area' in enabled_plots,

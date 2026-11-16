@@ -15,7 +15,7 @@ from nomad_auto_upload_tables.guessing import CATEGORIES, QUANTITY_TYPES
 
 m_package = SchemaPackage()
 
-MAPPING_MODES = ['column', 'row']
+MAPPING_MODES = ['Entire table as one entry (Recommended)', 'One entry per row']
 
 PLOT_CHECKBOXES = (
     'enable_xy_scatter',
@@ -152,9 +152,12 @@ class TabularGuess(EntryData):
     )
     mapping_mode = Quantity(
         type=MEnum(MAPPING_MODES),
-        default='column',
+        default='Entire table as one entry (Recommended)',
         description='Generation mode. Column mode creates one entry per table with array quantities; row mode creates one scalar entry per table row.',
-        a_eln=ELNAnnotation(component=ELNComponentEnum.EnumEditQuantity),
+            a_eln=ELNAnnotation(
+        component=ELNComponentEnum.EnumEditQuantity,
+        label='How should your table be imported?',
+        ),
     )
     # Not shown in the edit form: "All combination plots" (default on) covers the
     # common case with no manual picking needed. These stay settable via the API

@@ -131,7 +131,7 @@ def build_generated_artifacts(entry) -> GeneratedArtifacts:
         schema_file = _row_schema_path(getattr(entry, 'generated_schema_file', None), base)
         schema_dict = build_row_schema_dict(
             section_name=section_name,
-            schema_name=f'{_title_from_identifier(section_name)} row schema',
+            schema_name=f'{_title_from_identifier(section_name)} — Generated Row Schema',
             columns=columns,
         )
         return GeneratedArtifacts(
@@ -149,7 +149,7 @@ def build_generated_artifacts(entry) -> GeneratedArtifacts:
 
     schema_dict = build_schema_dict(
         section_name=section_name,
-        schema_name=f'{_title_from_identifier(section_name)} schema',
+        schema_name=f'{_title_from_identifier(section_name)} — Generated Schema',
         columns=columns,
         sheet_name=_excel_sheet_name(getattr(entry, 'data_file', None), getattr(entry, 'sheet_name', None)),
         enabled_plots=enabled_plots,
@@ -349,7 +349,7 @@ def build_entry_dict(
             # generated entries - it crashes with AttributeError on None. Setting
             # name here avoids that path entirely, and doubles as a readable
             # entry_name (ElnBaseSection copies it there when both are set).
-            'name': _title_from_identifier(section_name),
+            'name': f'{_title_from_identifier(section_name)} — Dataset',
         }
     }
     results = build_results_dict(results_config or {})

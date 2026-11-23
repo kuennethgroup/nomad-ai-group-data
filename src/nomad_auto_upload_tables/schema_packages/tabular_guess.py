@@ -321,7 +321,7 @@ class TabularGuess(EntryData):
             # the raw mainfile name; override with something readable, and
             # keep it in sync with generated_section_name edits like the
             # generated schema/entry/table-values names already are.
-            archive.metadata.entry_name = f'{_title_from_identifier(section_name)} review'
+            archive.metadata.entry_name = f'{_title_from_identifier(section_name)} — Review & Edit'
 
         if not (self.confirm_schema and self.columns and self.data_file):
             return

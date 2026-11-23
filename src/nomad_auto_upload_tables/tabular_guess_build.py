@@ -192,7 +192,7 @@ def _write_generated_files(context, files, *, force: bool, logger=None) -> list[
 
 
 def _row_entry_files(entry, df: pd.DataFrame, artifacts, schema_ref: str) -> tuple[tuple[str, str], ...]:
-    from nomad_auto_upload_tables.schema_generation import ROW_ENTRY_DIR, _base_name, _dump_yaml, _label_quantity, _quantity_name
+    from nomad_auto_upload_tables.schema_generation import ROW_ENTRY_DIR, _base_name, _dump_yaml, _label_quantity, _quantity_name, _title_from_identifier
 
     base = _base_name(entry.data_file or 'table')
     columns = [column for column in entry.columns if getattr(column, 'include', True) is not False]
@@ -216,7 +216,7 @@ def _row_entry_files(entry, df: pd.DataFrame, artifacts, schema_ref: str) -> tup
             if value is None:
                 continue
             data[_quantity_name(column)] = value
-        payload = {'metadata': {'entry_name': row_id}, 'data': data}
+        payload = {'metadata': {'entry_name': f'{_title_from_identifier(artifacts.section_name)} — Row {source_row}'}, 'data': data}
         path = f'{ROW_ENTRY_DIR}/{base}/{row_id}.archive.yaml'
         row_files.append((path, _dump_yaml(payload)))
     return tuple(row_files)
@@ -494,7 +494,7 @@ def _table_values_file(entry, df: pd.DataFrame, columns) -> tuple[str, str] | No
     payload = {
         'data': {
             'm_def': 'nomad_auto_upload_tables.schema_packages.table_values.TableValues',
-            'name': f'{_title_from_identifier(section_name)} values',
+            'name': f'{_title_from_identifier(section_name)} — Visualization Data',
             'source_file': str(entry.data_file or '').strip().lstrip('/'),
             'values': values,
         }
